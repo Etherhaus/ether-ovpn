@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=VPNdeck
+GenericName=VPN Client
+Comment=Connect to OpenVPN servers
+Exec=vpndeck
+Icon=vpndeck
+Terminal=false
+Categories=Network;
+Keywords=vpn;openvpn;unifi;tunnel;
+StartupWMClass=vpndeck

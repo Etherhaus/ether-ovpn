@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.thuutien.VPNdeck</id>
+  <name>VPNdeck</name>
+  <summary>Connect to OpenVPN servers</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <developer id="io.github.thuutien">
+    <name>Bryan Tran</name>
+  </developer>
+  <description>
+    <p>
+      VPNdeck is a simple desktop client for OpenVPN. Import the .ovpn profile
+      from your VPN server, such as a UniFi Dream Machine, and connect with one click.
+    </p>
+    <ul>
+      <li>Big, clear connection status with VPN address, server and traffic</li>
+      <li>System tray icon for quick connect and disconnect</li>
+      <li>Optional saved password in your desktop keyring for automatic sign-in</li>
+      <li>Connection log in its own window</li>
+      <li>Updates itself from inside the app</li>
+    </ul>
+    <p>Needs OpenVPN installed on the system (sudo apt install openvpn).</p>
+  </description>
+  <launchable type="desktop-id">io.github.thuutien.VPNdeck.desktop</launchable>
+  <url type="homepage">https://github.com/thuutien/vpndeck</url>
+  <url type="bugtracker">https://github.com/thuutien/vpndeck/issues</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Connected to a VPN</caption>
+      <image>https://raw.githubusercontent.com/thuutien/vpndeck/main/docs/screenshot.png</image>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-10-31">
+      <description><p>First release.</p></description>
+    </release>
+  </releases>
+</component>

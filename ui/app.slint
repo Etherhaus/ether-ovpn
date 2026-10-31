@@ -1,0 +1,641 @@
+import { Button, CheckBox, LineEdit, ListView, Palette, ProgressIndicator } from "std-widgets.slint";
+
+export enum ConnState { idle, connecting, connected, disconnecting, error }
+
+export struct ProfileInfo {
+    name: string,
+    saved-password: bool,
+}
+
+export enum UpdateState { idle, checking, available, downloading, installing, done, failed }
+
+// The indigo of the app icon.
+global Theme {
+    out property <color> accent: #4B4FD8;
+    out property <color> accent-hover: #3B3FC4;
+    out property <brush> accent-gradient: @linear-gradient(135deg, #6D7CFF 0%, #3127A8 100%);
+    out property <color> green: #22A35A;
+    out property <color> amber: #C98A0C;
+    out property <color> red: #D64545;
+    out property <color> muted: Palette.foreground.transparentize(0.45);
+}
+
+component BigButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    in property <bool> primary: true;
+    in property <length> font-size: 18px;
+    callback clicked();
+
+    min-height: 56px;
+    border-radius: 12px;
+    opacity: root.enabled ? 1 : 0.45;
+    background: root.primary ? (area.has-hover && root.enabled ? Theme.accent-hover : Theme.accent-gradient)
+        : (area.has-hover && root.enabled ? Palette.alternate-background.darker(0.04) : Palette.alternate-background);
+    border-width: root.primary ? 0 : 1px;
+    border-color: Palette.border;
+
+    Text {
+        text: root.text;
+        font-size: root.font-size;
+        font-weight: 600;
+        color: root.primary ? #FFFFFF : Palette.foreground;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    area := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component Link inherits Text {
+    in property <bool> enabled: true;
+    callback clicked();
+    color: !root.enabled ? Theme.muted : link-area.has-hover ? Theme.accent-hover : Theme.accent;
+    font-weight: 600;
+    link-area := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component Stat inherits VerticalLayout {
+    in property <string> label;
+    in property <string> value;
+    spacing: 2px;
+    Text {
+        text: root.label;
+        font-size: 13px;
+        color: Theme.muted;
+    }
+
+    Text {
+        text: root.value;
+        font-size: 17px;
+        font-weight: 600;
+        overflow: elide;
+    }
+}
+
+component ProfileRow inherits Rectangle {
+    in property <string> name;
+    in property <bool> selected;
+    in property <bool> connected;
+    in property <bool> can-remove;
+    in property <bool> saved-password;
+    callback clicked();
+    callback remove();
+    callback forget-password();
+
+    height: 52px;
+    border-radius: 10px;
+    background: root.selected ? Theme.accent.transparentize(0.88) : row-area.has-hover ? Palette.alternate-background : transparent;
+    border-width: root.selected ? 2px : 0;
+    border-color: Theme.accent;
+
+    row-area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text {
+                text: root.name;
+                font-size: 16px;
+                font-weight: root.selected ? 600 : 400;
+                overflow: elide;
+            }
+
+            if root.saved-password: Text {
+                text: "Password saved";
+                font-size: 12px;
+                color: Theme.muted;
+            }
+        }
+
+        if root.connected: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 10px;
+                height: 10px;
+                border-radius: 5px;
+                background: Theme.green;
+            }
+        }
+
+        if root.selected && root.saved-password: Link {
+            text: "Forget password";
+            font-size: 13px;
+            vertical-alignment: center;
+            clicked => {
+                root.forget-password();
+            }
+        }
+
+        if root.selected && root.can-remove: Link {
+            text: "Remove";
+            font-size: 13px;
+            vertical-alignment: center;
+            clicked => {
+                root.remove();
+            }
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "VPNdeck";
+    icon: @image-url("../assets/vpndeck-256.png");
+    preferred-width: 420px;
+    preferred-height: 700px;
+    min-width: 360px;
+    min-height: 540px;
+    default-font-size: 15px;
+
+    in property <[ProfileInfo]> profiles;
+    in-out property <int> selected: -1;
+    // Index of the profile with a running openvpn process, or -1.
+    in property <int> active: -1;
+    // Index of the profile the status fields below describe, kept after it stops.
+    in property <int> status-for: -1;
+    in property <ConnState> conn-state: ConnState.idle;
+    in property <string> status-text: "Disconnected";
+    in property <string> local-ip: "—";
+    in property <string> remote: "—";
+    in property <string> rx: "—";
+    in property <string> tx: "—";
+    in property <string> duration: "—";
+    in property <string> notice;
+
+    in property <bool> auth-visible;
+    in property <bool> auth-needs-username: true;
+    in property <string> auth-title;
+    in property <string> auth-error;
+    in-out property <string> auth-username;
+    in-out property <string> auth-password;
+    in-out property <bool> auth-remember;
+
+    in property <string> version;
+    in property <UpdateState> update-state: UpdateState.idle;
+    // Shown in the banner while an update is available or being installed.
+    in property <string> update-text;
+    // Shown under the version, e.g. "You're up to date".
+    in property <string> update-note;
+    in property <float> update-progress;
+
+    callback check-updates();
+    callback install-update();
+    callback open-release-notes();
+    callback restart-app();
+    callback dismiss-update();
+
+    callback import-profile();
+    callback remove-profile(int);
+    callback forget-password(int);
+    callback connect(int);
+    callback disconnect();
+    callback submit-auth(string, string);
+    callback cancel-auth();
+    callback show-log();
+
+    property <bool> has-selection: root.selected >= 0 && root.selected < root.profiles.length;
+    property <bool> busy: root.active >= 0;
+    property <bool> can-check: root.update-state == UpdateState.idle || root.update-state == UpdateState.failed;
+    // While a connection runs, the card always describes it, whichever row is selected.
+    property <bool> shows-status: root.busy || (root.has-selection && root.selected == root.status-for);
+    property <ConnState> shown-state: root.shows-status ? root.conn-state : ConnState.idle;
+    property <int> card-profile: root.busy ? root.active : root.selected;
+    property <string> card-name: root.card-profile >= 0 && root.card-profile < root.profiles.length ? root.profiles[root.card-profile].name : "";
+    property <color> state-color: root.shown-state == ConnState.connected ? Theme.green
+        : root.shown-state == ConnState.error ? Theme.red
+        : root.shown-state == ConnState.idle ? #8A8FA3
+        : Theme.amber;
+
+    VerticalLayout {
+        padding: 18px;
+        spacing: 14px;
+
+        HorizontalLayout {
+            spacing: 10px;
+            Image {
+                source: @image-url("../assets/vpndeck-256.png");
+                width: 32px;
+                height: 32px;
+            }
+
+            Text {
+                text: "VPNdeck";
+                font-size: 21px;
+                font-weight: 700;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+
+            Link {
+                text: "View log";
+                vertical-alignment: center;
+                clicked => {
+                    root.show-log();
+                }
+            }
+        }
+
+        if root.update-state != UpdateState.idle && root.update-state != UpdateState.checking: Rectangle {
+            border-radius: 12px;
+            background: root.update-state == UpdateState.failed ? Theme.red.transparentize(0.88) : Theme.accent.transparentize(0.88);
+            min-height: banner.preferred-height;
+            banner := VerticalLayout {
+                padding: 14px;
+                spacing: 10px;
+                Text {
+                    wrap: word-wrap;
+                    text: root.update-text;
+                }
+
+                if root.update-state == UpdateState.downloading: ProgressIndicator {
+                    height: 6px;
+                    progress: root.update-progress;
+                }
+
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 16px;
+                    if root.update-state == UpdateState.available: Link {
+                        text: "What's new";
+                        vertical-alignment: center;
+                        clicked => {
+                            root.open-release-notes();
+                        }
+                    }
+
+                    if root.update-state == UpdateState.available: BigButton {
+                        text: "Update now";
+                        font-size: 15px;
+                        min-height: 40px;
+                        width: 130px;
+                        clicked => {
+                            root.install-update();
+                        }
+                    }
+
+                    if root.update-state == UpdateState.done: BigButton {
+                        text: "Restart VPNdeck";
+                        font-size: 15px;
+                        min-height: 40px;
+                        width: 160px;
+                        clicked => {
+                            root.restart-app();
+                        }
+                    }
+
+                    if root.update-state == UpdateState.failed: Link {
+                        text: "Dismiss";
+                        clicked => {
+                            root.dismiss-update();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Status card
+        Rectangle {
+            border-radius: 16px;
+            background: root.state-color.transparentize(0.88);
+            min-height: card.preferred-height;
+            card := VerticalLayout {
+                padding: 18px;
+                spacing: 16px;
+                HorizontalLayout {
+                    spacing: 16px;
+                    Image {
+                        source: @image-url("../assets/shield.svg");
+                        colorize: root.state-color;
+                        width: 60px;
+                        height: 60px;
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        Text {
+                            font-size: 25px;
+                            font-weight: 700;
+                            color: root.shown-state == ConnState.idle ? Palette.foreground : root.state-color;
+                            text: root.shown-state == ConnState.connected ? "Connected"
+                                : root.shown-state == ConnState.connecting ? "Connecting…"
+                                : root.shown-state == ConnState.disconnecting ? "Disconnecting…"
+                                : root.shown-state == ConnState.error ? "Couldn't connect"
+                                : "Not connected";
+                        }
+
+                        Text {
+                            font-size: 15px;
+                            wrap: word-wrap;
+                            color: Theme.muted;
+                            text: root.shown-state == ConnState.connected ? root.card-name + "  ·  " + root.duration
+                                : root.shown-state == ConnState.idle ? (root.card-name != "" ? root.card-name : "Choose a profile below")
+                                : root.status-text;
+                        }
+                    }
+                }
+
+                if root.shown-state == ConnState.connected: GridLayout {
+                    spacing: 12px;
+                    Row {
+                        Stat {
+                            label: "VPN address";
+                            value: root.local-ip;
+                        }
+
+                        Stat {
+                            label: "Server";
+                            value: root.remote;
+                        }
+                    }
+
+                    Row {
+                        Stat {
+                            label: "Received";
+                            value: root.rx;
+                        }
+
+                        Stat {
+                            label: "Sent";
+                            value: root.tx;
+                        }
+                    }
+                }
+            }
+        }
+
+        BigButton {
+            primary: !root.busy;
+            text: !root.busy ? "Connect"
+                : root.conn-state == ConnState.disconnecting ? "Disconnecting…"
+                : "Disconnect";
+            enabled: root.busy ? root.conn-state != ConnState.disconnecting : root.has-selection;
+            clicked => {
+                if root.busy {
+                    root.disconnect();
+                } else {
+                    root.connect(root.selected);
+                }
+            }
+        }
+
+        HorizontalLayout {
+            padding-top: 4px;
+            Text {
+                text: "Profiles";
+                font-size: 17px;
+                font-weight: 700;
+                horizontal-stretch: 1;
+            }
+
+            Link {
+                text: "+ Import";
+                vertical-alignment: center;
+                clicked => {
+                    root.import-profile();
+                }
+            }
+        }
+
+        if root.notice != "": Text {
+            wrap: word-wrap;
+            color: Theme.muted;
+            text: root.notice;
+        }
+
+        ListView {
+            vertical-stretch: 1;
+            for profile[i] in root.profiles: VerticalLayout {
+                padding-bottom: 6px;
+                ProfileRow {
+                    name: profile.name;
+                    saved-password: profile.saved-password;
+                    selected: i == root.selected;
+                    connected: i == root.active && root.conn-state == ConnState.connected;
+                    can-remove: i != root.active;
+                    clicked => {
+                        root.selected = i;
+                    }
+                    remove => {
+                        root.remove-profile(i);
+                    }
+                    forget-password => {
+                        root.forget-password(i);
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            spacing: 2px;
+            HorizontalLayout {
+                Text {
+                    text: "VPNdeck " + root.version;
+                    font-size: 13px;
+                    color: Theme.muted;
+                    horizontal-stretch: 1;
+                }
+
+                Link {
+                    font-size: 13px;
+                    enabled: root.can-check;
+                    text: root.update-state == UpdateState.checking ? "Checking…" : "Check for updates";
+                    clicked => {
+                        root.check-updates();
+                    }
+                }
+            }
+
+            if root.update-note != "": Text {
+                text: root.update-note;
+                font-size: 13px;
+                wrap: word-wrap;
+                color: Theme.muted;
+            }
+        }
+    }
+
+    if root.auth-visible: Rectangle {
+        background: #00000088;
+        TouchArea { }
+
+        Rectangle {
+            width: min(380px, root.width - 32px);
+            height: auth-card.preferred-height;
+            background: Palette.background;
+            border-radius: 16px;
+            border-width: 1px;
+            border-color: Palette.border;
+
+            auth-card := VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+                Text {
+                    text: root.auth-title;
+                    wrap: word-wrap;
+                    font-size: 20px;
+                    font-weight: 700;
+                }
+
+                if root.auth-needs-username: LineEdit {
+                    placeholder-text: "Username";
+                    font-size: 16px;
+                    min-height: 44px;
+                    text <=> root.auth-username;
+                    init => {
+                        if root.auth-username == "" {
+                            self.focus();
+                        }
+                    }
+                }
+
+                LineEdit {
+                    placeholder-text: "Password";
+                    input-type: password;
+                    font-size: 16px;
+                    min-height: 44px;
+                    text <=> root.auth-password;
+                    init => {
+                        if !root.auth-needs-username || root.auth-username != "" {
+                            self.focus();
+                        }
+                    }
+                    accepted => {
+                        root.submit-auth(root.auth-username, root.auth-password);
+                    }
+                }
+
+                CheckBox {
+                    text: "Remember password";
+                    checked <=> root.auth-remember;
+                }
+
+                if root.auth-error != "": Text {
+                    text: root.auth-error;
+                    wrap: word-wrap;
+                    color: Theme.red;
+                }
+
+                HorizontalLayout {
+                    spacing: 10px;
+                    padding-top: 4px;
+                    BigButton {
+                        primary: false;
+                        text: "Cancel";
+                        font-size: 16px;
+                        min-height: 48px;
+                        clicked => {
+                            root.cancel-auth();
+                        }
+                    }
+
+                    BigButton {
+                        text: "Sign in";
+                        font-size: 16px;
+                        min-height: 48px;
+                        clicked => {
+                            root.submit-auth(root.auth-username, root.auth-password);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component LogWindow inherits Window {
+    title: "VPNdeck log";
+    icon: @image-url("../assets/vpndeck-256.png");
+    preferred-width: 760px;
+    preferred-height: 460px;
+    default-font-size: 15px;
+
+    in property <[string]> lines;
+    in property <int> count;
+    callback copy-all();
+    callback save();
+    callback clear();
+
+    changed count => {
+        log-view.content-y = min(0px, log-view.visible-height - log-view.content-height);
+    }
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+        HorizontalLayout {
+            spacing: 18px;
+            Text {
+                text: "Connection log";
+                font-size: 18px;
+                font-weight: 700;
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+            }
+
+            Link {
+                text: "Copy all";
+                vertical-alignment: center;
+                enabled: root.lines.length > 0;
+                clicked => {
+                    root.copy-all();
+                }
+            }
+
+            Link {
+                text: "Save…";
+                vertical-alignment: center;
+                enabled: root.lines.length > 0;
+                clicked => {
+                    root.save();
+                }
+            }
+
+            Link {
+                text: "Clear";
+                vertical-alignment: center;
+                enabled: root.lines.length > 0;
+                clicked => {
+                    root.clear();
+                }
+            }
+        }
+
+        if root.lines.length == 0: Text {
+            color: Theme.muted;
+            text: "Nothing logged yet. OpenVPN's output appears here while you connect.";
+            wrap: word-wrap;
+        }
+
+        log-view := ListView {
+            vertical-stretch: 1;
+            for line in root.lines: Text {
+                text: line;
+                wrap: word-wrap;
+                font-family: "monospace";
+                font-size: 12px;
+            }
+        }
+    }
+}
