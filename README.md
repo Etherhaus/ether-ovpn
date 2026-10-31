@@ -1,8 +1,14 @@
-# VPNdeck
+<p align="center">
+  <img src="assets/vpndeck.svg" alt="VPNdeck icon" width="112">
+</p>
 
-A small desktop client for OpenVPN on Linux, written in Rust with [Slint](https://slint.dev).
-It works with the `.ovpn` profiles exported by UniFi gateways (UDM Pro / UDM Pro SE) and
-any other OpenVPN 2.x server.
+<h1 align="center">VPNdeck</h1>
+
+<p align="center">
+  A small desktop client for OpenVPN on Linux, written in Rust with <a href="https://slint.dev">Slint</a>.
+  It works with the <code>.ovpn</code> profiles exported by UniFi gateways (UDM Pro / UDM Pro SE) and
+  any other OpenVPN 2.x server.
+</p>
 
 ![VPNdeck connected to a VPN](docs/screenshot.png)
 
