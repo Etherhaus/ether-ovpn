@@ -10,7 +10,7 @@
   <description>
     <p>
       VPNdeck is a simple desktop client for OpenVPN. Import the .ovpn profile
-      from your VPN server, such as a UniFi Dream Machine, and connect with one click.
+      from your OpenVPN server and connect with one click.
     </p>
     <ul>
       <li>Big, clear connection status with VPN address, server and traffic</li>
@@ -19,7 +19,7 @@
       <li>Connection log in its own window</li>
       <li>Updates itself from inside the app</li>
     </ul>
-    <p>Needs OpenVPN installed on the system (sudo apt install openvpn).</p>
+    <p>Needs OpenVPN 2.4 or newer installed on the system (sudo apt install openvpn).</p>
   </description>
   <launchable type="desktop-id">io.github.thuutien.VPNdeck.desktop</launchable>
   <url type="homepage">https://github.com/thuutien/vpndeck</url>

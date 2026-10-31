@@ -44,14 +44,14 @@ Version: $version
 Architecture: amd64
 Maintainer: $maintainer
 Installed-Size: $(du -sk "$deb/usr" | cut -f1)
-Depends: openvpn, pkexec | policykit-1, libc6 (>= 2.39), libgcc-s1, libegl1, libfontconfig1, libxkbcommon-x11-0, libwayland-client0
+Depends: openvpn (>= 2.4), pkexec | policykit-1, libc6 (>= 2.39), libgcc-s1, libegl1, libfontconfig1, libxkbcommon-x11-0, libwayland-client0
 Recommends: xdg-desktop-portal, xdg-utils
 Section: net
 Priority: optional
 Homepage: https://github.com/thuutien/vpndeck
 Description: Desktop client for OpenVPN profiles
- VPNdeck imports .ovpn profiles (such as those exported by UniFi gateways)
- and connects to them with OpenVPN, showing status, traffic and logs, with
+ VPNdeck imports .ovpn profiles from an OpenVPN server and connects to
+ them with OpenVPN 2.4 or newer, showing status, traffic and logs, with
  a system tray icon for quick connect and disconnect.
 CONTROL
 dpkg-deb --root-owner-group --build "$deb" "dist/vpndeck_${version}_amd64.deb" >/dev/null

@@ -7,5 +7,5 @@ Exec=vpndeck
 Icon=vpndeck
 Terminal=false
 Categories=Network;
-Keywords=vpn;openvpn;unifi;tunnel;
+Keywords=vpn;openvpn;tunnel;
 StartupWMClass=vpndeck

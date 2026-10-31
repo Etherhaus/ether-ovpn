@@ -15,8 +15,7 @@ use slint::{CloseRequestResponse, ComponentHandle, Model, ModelRc, SharedString,
 slint::include_modules!();
 
 const MAX_LOG_LINES: usize = 2000;
-const EMPTY_NOTICE: &str = "Import a .ovpn file to get started. On a UniFi gateway, download it from \
-    Settings → VPN → VPN Server → OpenVPN.";
+const EMPTY_NOTICE: &str = "Import a .ovpn file to get started. Download it from your OpenVPN server.";
 
 /// Everything that reaches the UI thread from other threads.
 enum Msg {

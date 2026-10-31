@@ -6,8 +6,8 @@
 
 <p align="center">
   A small desktop client for OpenVPN on Linux, written in Rust with <a href="https://slint.dev">Slint</a>.
-  It works with the <code>.ovpn</code> profiles exported by UniFi gateways (UDM Pro / UDM Pro SE) and
-  any other OpenVPN 2.x server.
+  Import the <code>.ovpn</code> profile from your OpenVPN server and connect with one click.
+  Works with OpenVPN 2.4 or newer.
 </p>
 
 ![VPNdeck connected to a VPN](docs/screenshot.png)
@@ -25,6 +25,8 @@
 - Applies DNS pushed by the server when `update-systemd-resolved` or `update-resolv-conf` is installed
 
 ## Requirements
+
+OpenVPN 2.4 or newer installed on the computer (tested with 2.6):
 
 ```
 sudo apt install openvpn
@@ -82,7 +84,7 @@ This builds `dist/` (tarball, .deb, Flatpak and `SHA256SUMS`; needs `dpkg-deb`, 
 `org.freedesktop.Platform//25.08` runtime). Attach all four to a GitHub release
 tagged `v<version>` at https://github.com/thuutien/vpndeck so the in-app updater can find it.
 
-## Getting the profile from a UDM Pro SE
+## Getting started
 
-In UniFi Network: Settings → VPN → VPN Server → your OpenVPN server → Download configuration.
-Then click **Import…** in VPNdeck and pick the downloaded file.
+Download the client configuration (`.ovpn` file) from your OpenVPN server, then click
+**+ Import** in VPNdeck and pick the file.
