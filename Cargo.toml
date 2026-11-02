@@ -1,6 +1,6 @@
 [package]
 name = "vpndeck"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 description = "A desktop client for OpenVPN profiles on Linux"
 repository = "https://github.com/thuutien/vpndeck"
