@@ -1,8 +1,8 @@
 //! Checks GitHub for a newer vpndeck release, and downloads and installs it.
 //!
-//! A standalone binary (release tarball) is replaced in place, the .deb is
-//! installed through apt (asking for the admin password), and the Flatpak is
-//! reinstalled through the host's `flatpak` command.
+//! A standalone binary (release tarball) is replaced in place, the .deb and
+//! .rpm are installed through apt, dnf or zypper (asking for the admin
+//! password), and the Flatpak is reinstalled through the host's `flatpak` command.
 
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -119,6 +119,8 @@ pub enum Install {
     Binary(PathBuf),
     /// The .deb package in /usr.
     Deb,
+    /// The .rpm package in /usr.
+    Rpm,
     /// The Flatpak, installed per user or system-wide.
     Flatpak { app_id: String, user: bool },
 }
@@ -139,7 +141,8 @@ impl Install {
             return Err("This copy was built from source. Update it with git pull and cargo build.".to_owned());
         }
         if exe.starts_with("/usr/") {
-            return Ok(Self::Deb);
+            let from_rpm = Command::new("rpm").arg("-qf").arg(&exe).output().is_ok_and(|o| o.status.success());
+            return Ok(if from_rpm { Self::Rpm } else { Self::Deb });
         }
         Ok(Self::Binary(exe))
     }
@@ -149,20 +152,21 @@ impl Install {
         match self {
             Self::Binary(_) => "-x86_64-linux.tar.gz",
             Self::Deb => "_amd64.deb",
+            Self::Rpm => ".x86_64.rpm",
             Self::Flatpak { .. } => "-x86_64.flatpak",
         }
     }
 
     /// Whether installing will ask for the admin password.
     pub fn asks_for_password(&self) -> bool {
-        matches!(self, Self::Deb) || matches!(self, Self::Flatpak { user: false, .. })
+        matches!(self, Self::Deb | Self::Rpm) || matches!(self, Self::Flatpak { user: false, .. })
     }
 
     /// Starts the updated copy of vpndeck. The caller then closes this one.
     pub fn relaunch(&self) -> Result<(), String> {
         let result = match self {
             Self::Binary(exe) => Command::new(exe).spawn(),
-            Self::Deb => Command::new("/usr/bin/vpndeck").spawn(),
+            Self::Deb | Self::Rpm => Command::new("/usr/bin/vpndeck").spawn(),
             Self::Flatpak { app_id, .. } => {
                 Command::new("flatpak-spawn").args(["--host", "flatpak", "run", app_id]).spawn()
             }
@@ -217,6 +221,15 @@ fn download_and_install(install: &Install, assets: &[Asset], report: &dyn Fn(Pro
             Install::Deb => {
                 run_installer(Command::new("pkexec").args(["apt-get", "install", "-y", "--allow-downgrades"]).arg(&file))
             }
+            // The .rpm isn't signed, which zypper refuses without being told.
+            Install::Rpm if Path::new("/usr/bin/dnf").exists() => {
+                run_installer(Command::new("pkexec").args(["dnf", "install", "-y"]).arg(&file))
+            }
+            Install::Rpm => run_installer(
+                Command::new("pkexec")
+                    .args(["zypper", "--non-interactive", "install", "--allow-unsigned-rpm", "--oldpackage"])
+                    .arg(&file),
+            ),
             Install::Flatpak { user, .. } => run_installer(
                 Command::new("flatpak-spawn")
                     .args(["--host", "flatpak", "install", "--reinstall", "-y", "--noninteractive"])

@@ -1,0 +1,46 @@
+# Builds the release packages on Ubuntu 24.04, so the binary runs on glibc 2.39
+# and newer, and attaches them to the GitHub release for the pushed tag.
+# Write the release notes on a draft release for the tag before pushing it;
+# this workflow publishes the release once the files are attached.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  packages:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig1-dev rpm flatpak
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub org.freedesktop.Platform//25.08
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Check the tag matches Cargo.toml
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          test "v$version" = "$GITHUB_REF_NAME"
+
+      - run: cargo test --release
+
+      - run: packaging/build-packages.sh
+
+      - name: Attach the packages and publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          gh release view "$tag" >/dev/null 2>&1 ||
+            gh release create "$tag" --draft --title "VPNdeck ${tag#v}" --notes ""
+          gh release upload "$tag" dist/* --clobber
+          gh release edit "$tag" --draft=false --latest

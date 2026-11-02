@@ -2,9 +2,10 @@
 # Builds the release packages into dist/:
 #   vpndeck-<version>-x86_64-linux.tar.gz   binary + install script
 #   vpndeck_<version>_amd64.deb             Debian/Ubuntu/Mint package
+#   vpndeck-<version>-1.x86_64.rpm          Fedora/openSUSE package
 #   vpndeck-<version>-x86_64.flatpak        Flatpak bundle (Freedesktop runtime)
 #   SHA256SUMS
-# Needs dpkg-deb, flatpak and the org.freedesktop.Platform//25.08 runtime:
+# Needs dpkg-deb, rpmbuild, flatpak and the org.freedesktop.Platform//25.08 runtime:
 #   flatpak install --user flathub org.freedesktop.Platform//25.08
 # Attach them all to a GitHub release tagged v<version>; the in-app updater
 # downloads from the latest release.
@@ -55,6 +56,52 @@ Description: Desktop client for OpenVPN profiles
  a system tray icon for quick connect and disconnect.
 CONTROL
 dpkg-deb --root-owner-group --build "$deb" "dist/vpndeck_${version}_amd64.deb" >/dev/null
+
+# --- .rpm --------------------------------------------------------------------
+# One package for Fedora and openSUSE: dependencies are on sonames and files,
+# which both name the same way. The libraries below are loaded at run time,
+# so rpmbuild can't find them by itself.
+rpm="$work/rpm"
+mkdir -p "$rpm/SPECS"
+cat > "$rpm/SPECS/vpndeck.spec" <<SPEC
+Name: vpndeck
+Version: $version
+Release: 1
+Summary: Desktop client for OpenVPN profiles
+License: LicenseRef-Unspecified
+URL: https://github.com/thuutien/vpndeck
+Packager: $maintainer
+Requires: openvpn >= 2.4
+Requires: /usr/bin/pkexec
+Requires: libEGL.so.1()(64bit)
+Requires: libfontconfig.so.1()(64bit)
+Requires: libwayland-client.so.0()(64bit)
+Requires: libxkbcommon-x11.so.0()(64bit)
+Recommends: xdg-desktop-portal
+Recommends: xdg-utils
+
+%description
+VPNdeck imports .ovpn profiles from an OpenVPN server and connects to
+them with OpenVPN 2.4 or newer, showing status, traffic and logs, with
+a system tray icon for quick connect and disconnect.
+
+%install
+install -Dm755 $PWD/target/release/vpndeck %{buildroot}/usr/bin/vpndeck
+install -Dm644 $PWD/packaging/vpndeck.desktop %{buildroot}/usr/share/applications/vpndeck.desktop
+install -Dm644 $PWD/assets/vpndeck.svg %{buildroot}/usr/share/icons/hicolor/scalable/apps/vpndeck.svg
+install -Dm644 $PWD/assets/vpndeck-256.png %{buildroot}/usr/share/icons/hicolor/256x256/apps/vpndeck.png
+install -Dm644 $PWD/README.md %{buildroot}/usr/share/doc/vpndeck/README.md
+
+%files
+/usr/bin/vpndeck
+/usr/share/applications/vpndeck.desktop
+/usr/share/icons/hicolor/scalable/apps/vpndeck.svg
+/usr/share/icons/hicolor/256x256/apps/vpndeck.png
+%doc /usr/share/doc/vpndeck/README.md
+SPEC
+rpmbuild -bb --quiet --define "_topdir $rpm" --define "debug_package %{nil}" --define "__strip /bin/true" \
+  "$rpm/SPECS/vpndeck.spec"
+cp "$rpm/RPMS/x86_64/vpndeck-$version-1.x86_64.rpm" dist/
 
 # --- Flatpak -----------------------------------------------------------------
 # OpenVPN has to run as root on the host, so the app starts it through
