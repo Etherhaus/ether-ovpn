@@ -20,6 +20,54 @@ global Theme {
     out property <color> muted: Palette.foreground.transparentize(0.45);
 }
 
+// Lets Tab reach a clickable element and Enter or Space activate it.
+// Mouse clicks don't take focus, so the focus ring only shows for keyboard use.
+component ActivationScope inherits FocusScope {
+    callback activated();
+    focus-on-click: false;
+    key-pressed(event) => {
+        if event.text == Key.Return || event.text == " " {
+            root.activated();
+            return accept;
+        }
+        reject
+    }
+}
+
+// A dimmed overlay with a centered card. Escape cancels it.
+component Modal inherits Rectangle {
+    callback cancel();
+    background: #00000088;
+    TouchArea { }
+
+    FocusScope {
+        focus-on-click: false;
+        focus-on-tab-navigation: false;
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.cancel();
+                return accept;
+            }
+            reject
+        }
+
+        Rectangle {
+            width: min(380px, root.width - 32px);
+            height: card.preferred-height;
+            background: Palette.background;
+            border-radius: 16px;
+            border-width: 1px;
+            border-color: Palette.border;
+
+            card := VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+                @children
+            }
+        }
+    }
+}
+
 component BigButton inherits Rectangle {
     in property <string> text;
     in property <bool> enabled: true;
@@ -32,8 +80,14 @@ component BigButton inherits Rectangle {
     opacity: root.enabled ? 1 : 0.45;
     background: root.primary ? (area.has-hover && root.enabled ? Theme.accent-hover : Theme.accent-gradient)
         : (area.has-hover && root.enabled ? Palette.alternate-background.darker(0.04) : Palette.alternate-background);
-    border-width: root.primary ? 0 : 1px;
-    border-color: Palette.border;
+    border-width: focus.has-focus ? 2px : root.primary ? 0 : 1px;
+    border-color: focus.has-focus ? Palette.foreground : Palette.border;
+    forward-focus: focus;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => {
+        root.clicked();
+    }
 
     Text {
         text: root.text;
@@ -42,6 +96,13 @@ component BigButton inherits Rectangle {
         color: root.primary ? #FFFFFF : Palette.foreground;
         horizontal-alignment: center;
         vertical-alignment: center;
+    }
+
+    focus := ActivationScope {
+        enabled: root.enabled;
+        activated => {
+            root.clicked();
+        }
     }
 
     area := TouchArea {
@@ -58,6 +119,29 @@ component Link inherits Text {
     callback clicked();
     color: !root.enabled ? Theme.muted : link-area.has-hover ? Theme.accent-hover : Theme.accent;
     font-weight: 600;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    if focus.has-focus: Rectangle {
+        x: -4px;
+        y: -2px;
+        width: parent.width + 8px;
+        height: parent.height + 4px;
+        border-radius: 4px;
+        border-width: 2px;
+        border-color: Theme.accent;
+    }
+
+    focus := ActivationScope {
+        enabled: root.enabled;
+        activated => {
+            root.clicked();
+        }
+    }
+
     link-area := TouchArea {
         enabled: root.enabled;
         mouse-cursor: pointer;
@@ -190,6 +274,8 @@ export component AppWindow inherits Window {
     in-out property <string> auth-username;
     in-out property <string> auth-password;
     in-out property <bool> auth-remember;
+    // Index of the profile whose removal is waiting for confirmation, or -1.
+    property <int> confirm-remove: -1;
 
     in property <string> version;
     in property <UpdateState> update-state: UpdateState.idle;
@@ -438,7 +524,7 @@ export component AppWindow inherits Window {
                         root.selected = i;
                     }
                     remove => {
-                        root.remove-profile(i);
+                        root.confirm-remove = i;
                     }
                     forget-password => {
                         root.forget-password(i);
@@ -476,88 +562,124 @@ export component AppWindow inherits Window {
         }
     }
 
-    if root.auth-visible: Rectangle {
-        background: #00000088;
-        TouchArea { }
+    if root.confirm-remove >= 0 && root.confirm-remove < root.profiles.length: Modal {
+        cancel => {
+            root.confirm-remove = -1;
+        }
 
-        Rectangle {
-            width: min(380px, root.width - 32px);
-            height: auth-card.preferred-height;
-            background: Palette.background;
-            border-radius: 16px;
-            border-width: 1px;
-            border-color: Palette.border;
+        Text {
+            text: "Remove “" + root.profiles[root.confirm-remove].name + "”?";
+            wrap: word-wrap;
+            font-size: 20px;
+            font-weight: 700;
+        }
 
-            auth-card := VerticalLayout {
-                padding: 20px;
-                spacing: 12px;
-                Text {
-                    text: root.auth-title;
-                    wrap: word-wrap;
-                    font-size: 20px;
-                    font-weight: 700;
+        Text {
+            text: root.profiles[root.confirm-remove].saved-password
+                ? "The profile and its saved password will be deleted. You'll need the .ovpn file to add it again."
+                : "The profile will be deleted. You'll need the .ovpn file to add it again.";
+            wrap: word-wrap;
+            color: Theme.muted;
+        }
+
+        HorizontalLayout {
+            spacing: 10px;
+            padding-top: 4px;
+            BigButton {
+                primary: false;
+                text: "Cancel";
+                font-size: 16px;
+                min-height: 48px;
+                init => {
+                    self.focus();
                 }
-
-                if root.auth-needs-username: LineEdit {
-                    placeholder-text: "Username";
-                    font-size: 16px;
-                    min-height: 44px;
-                    text <=> root.auth-username;
-                    init => {
-                        if root.auth-username == "" {
-                            self.focus();
-                        }
-                    }
+                clicked => {
+                    root.confirm-remove = -1;
                 }
+            }
 
-                LineEdit {
-                    placeholder-text: "Password";
-                    input-type: password;
-                    font-size: 16px;
-                    min-height: 44px;
-                    text <=> root.auth-password;
-                    init => {
-                        if !root.auth-needs-username || root.auth-username != "" {
-                            self.focus();
-                        }
-                    }
-                    accepted => {
-                        root.submit-auth(root.auth-username, root.auth-password);
-                    }
+            BigButton {
+                text: "Remove";
+                font-size: 16px;
+                min-height: 48px;
+                clicked => {
+                    root.remove-profile(root.confirm-remove);
+                    root.confirm-remove = -1;
                 }
+            }
+        }
+    }
 
-                CheckBox {
-                    text: "Remember password";
-                    checked <=> root.auth-remember;
+    if root.auth-visible: Modal {
+        cancel => {
+            root.cancel-auth();
+        }
+
+        Text {
+            text: root.auth-title;
+            wrap: word-wrap;
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        if root.auth-needs-username: LineEdit {
+            placeholder-text: "Username";
+            font-size: 16px;
+            min-height: 44px;
+            text <=> root.auth-username;
+            init => {
+                if root.auth-username == "" {
+                    self.focus();
                 }
+            }
+        }
 
-                if root.auth-error != "": Text {
-                    text: root.auth-error;
-                    wrap: word-wrap;
-                    color: Theme.red;
+        LineEdit {
+            placeholder-text: "Password";
+            input-type: password;
+            font-size: 16px;
+            min-height: 44px;
+            text <=> root.auth-password;
+            init => {
+                if !root.auth-needs-username || root.auth-username != "" {
+                    self.focus();
                 }
+            }
+            accepted => {
+                root.submit-auth(root.auth-username, root.auth-password);
+            }
+        }
 
-                HorizontalLayout {
-                    spacing: 10px;
-                    padding-top: 4px;
-                    BigButton {
-                        primary: false;
-                        text: "Cancel";
-                        font-size: 16px;
-                        min-height: 48px;
-                        clicked => {
-                            root.cancel-auth();
-                        }
-                    }
+        CheckBox {
+            text: "Remember password";
+            checked <=> root.auth-remember;
+        }
 
-                    BigButton {
-                        text: "Sign in";
-                        font-size: 16px;
-                        min-height: 48px;
-                        clicked => {
-                            root.submit-auth(root.auth-username, root.auth-password);
-                        }
-                    }
+        if root.auth-error != "": Text {
+            text: root.auth-error;
+            wrap: word-wrap;
+            color: Theme.red;
+        }
+
+        HorizontalLayout {
+            spacing: 10px;
+            padding-top: 4px;
+            BigButton {
+                primary: false;
+                text: "Cancel";
+                font-size: 16px;
+                min-height: 48px;
+                clicked => {
+                    root.cancel-auth();
+                }
+            }
+
+            BigButton {
+                text: "Sign in";
+                font-size: 16px;
+                min-height: 48px;
+                clicked => {
+                    root.submit-auth(root.auth-username, root.auth-password);
                 }
             }
         }

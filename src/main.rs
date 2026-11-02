@@ -4,7 +4,7 @@ mod secrets;
 mod tray;
 mod updater;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc;
@@ -106,12 +106,22 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    // File dialogs run async so the event loop keeps going while they're open.
     log_window.on_save({
         let log_model = log_model.clone();
+        let saving = Rc::new(Cell::new(false));
         move || {
-            if let Some(path) = rfd::FileDialog::new().set_title("Save log").set_file_name("vpndeck.log").save_file() {
-                let _ = std::fs::write(path, log_text(&log_model));
+            if saving.replace(true) {
+                return;
             }
+            let (log_model, saving) = (log_model.clone(), saving.clone());
+            let _ = slint::spawn_local(async move {
+                let file = rfd::AsyncFileDialog::new().set_title("Save log").set_file_name("vpndeck.log").save_file().await;
+                saving.set(false);
+                if let Some(file) = file {
+                    let _ = std::fs::write(file.path(), log_text(&log_model));
+                }
+            });
         }
     });
 
@@ -124,23 +134,30 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui_weak = ui.as_weak();
         let app = app.clone();
         let profile_model = profile_model.clone();
+        let picking = Rc::new(Cell::new(false));
         move || {
-            let Some(path) = rfd::FileDialog::new()
-                .set_title("Import OpenVPN profile")
-                .add_filter("OpenVPN profile", &["ovpn", "conf"])
-                .pick_file()
-            else {
+            if picking.replace(true) {
                 return;
-            };
-            let ui = ui_weak.unwrap();
-            let mut app = app.borrow_mut();
-            match app.store.import(&path) {
-                Ok(i) => {
-                    sync_profiles(&ui, &app.store, &profile_model);
-                    ui.set_selected(i as i32);
-                }
-                Err(e) => ui.set_notice(format!("Could not import {}: {e}", path.display()).into()),
             }
+            let (ui_weak, app, profile_model, picking) = (ui_weak.clone(), app.clone(), profile_model.clone(), picking.clone());
+            let _ = slint::spawn_local(async move {
+                let file = rfd::AsyncFileDialog::new()
+                    .set_title("Import OpenVPN profile")
+                    .add_filter("OpenVPN profile", &["ovpn", "conf"])
+                    .pick_file()
+                    .await;
+                picking.set(false);
+                let (Some(file), Some(ui)) = (file, ui_weak.upgrade()) else { return };
+                let path = file.path();
+                let mut app = app.borrow_mut();
+                match app.store.import(path) {
+                    Ok(i) => {
+                        sync_profiles(&ui, &app.store, &profile_model);
+                        ui.set_selected(i as i32);
+                    }
+                    Err(e) => ui.set_notice(format!("Could not import {}: {e}", path.display()).into()),
+                }
+            });
         }
     });
 
