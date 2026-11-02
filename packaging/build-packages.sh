@@ -26,7 +26,7 @@ trap 'rm -rf "$work"' EXIT
 # --- tarball -----------------------------------------------------------------
 name="vpndeck-$version-x86_64-linux"
 mkdir -p "$work/$name/packaging"
-cp target/release/vpndeck README.md "$work/$name/"
+cp target/release/vpndeck README.md LICENSE "$work/$name/"
 cp -r assets "$work/$name/"
 cp packaging/install.sh packaging/vpndeck.desktop "$work/$name/packaging/"
 tar -C "$work" -czf "dist/$name.tar.gz" "$name"
@@ -38,6 +38,7 @@ install -Dm644 packaging/vpndeck.desktop "$deb/usr/share/applications/vpndeck.de
 install -Dm644 assets/vpndeck.svg "$deb/usr/share/icons/hicolor/scalable/apps/vpndeck.svg"
 install -Dm644 assets/vpndeck-256.png "$deb/usr/share/icons/hicolor/256x256/apps/vpndeck.png"
 install -Dm644 README.md "$deb/usr/share/doc/vpndeck/README.md"
+install -Dm644 LICENSE "$deb/usr/share/doc/vpndeck/copyright"
 mkdir -p "$deb/DEBIAN"
 cat > "$deb/DEBIAN/control" <<CONTROL
 Package: vpndeck
@@ -68,7 +69,7 @@ Name: vpndeck
 Version: $version
 Release: 1
 Summary: Desktop client for OpenVPN profiles
-License: LicenseRef-Unspecified
+License: MIT
 URL: https://github.com/thuutien/vpndeck
 Packager: $maintainer
 Requires: openvpn >= 2.4
@@ -91,6 +92,7 @@ install -Dm644 $PWD/packaging/vpndeck.desktop %{buildroot}/usr/share/application
 install -Dm644 $PWD/assets/vpndeck.svg %{buildroot}/usr/share/icons/hicolor/scalable/apps/vpndeck.svg
 install -Dm644 $PWD/assets/vpndeck-256.png %{buildroot}/usr/share/icons/hicolor/256x256/apps/vpndeck.png
 install -Dm644 $PWD/README.md %{buildroot}/usr/share/doc/vpndeck/README.md
+install -Dm644 $PWD/LICENSE %{buildroot}/usr/share/licenses/vpndeck/LICENSE
 
 %files
 /usr/bin/vpndeck
@@ -98,6 +100,7 @@ install -Dm644 $PWD/README.md %{buildroot}/usr/share/doc/vpndeck/README.md
 /usr/share/icons/hicolor/scalable/apps/vpndeck.svg
 /usr/share/icons/hicolor/256x256/apps/vpndeck.png
 %doc /usr/share/doc/vpndeck/README.md
+%license /usr/share/licenses/vpndeck/LICENSE
 SPEC
 rpmbuild -bb --quiet --define "_topdir $rpm" --define "debug_package %{nil}" --define "__strip /bin/true" \
   "$rpm/SPECS/vpndeck.spec"

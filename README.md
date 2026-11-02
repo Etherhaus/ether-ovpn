@@ -76,15 +76,22 @@ packaging/install.sh
 
 ## Releasing
 
-```
-./packaging/build-packages.sh
-```
+Bump the version in `Cargo.toml` and add a `<release>` entry to
+`packaging/io.github.thuutien.VPNdeck.metainfo.xml`, then push a `v<version>` tag. The Release
+workflow builds the tarball, .deb, .rpm, Flatpak and `SHA256SUMS` on Ubuntu 24.04 (so the binary
+runs on glibc 2.39 and newer), attaches them to the GitHub release for the tag and publishes it,
+which is where the in-app updater looks. To write the release notes yourself, create a draft
+release for the tag before pushing it.
 
-This builds `dist/` (tarball, .deb, Flatpak and `SHA256SUMS`; needs `dpkg-deb`, `flatpak` and the
-`org.freedesktop.Platform//25.08` runtime). Attach all four to a GitHub release
-tagged `v<version>` at https://github.com/thuutien/vpndeck so the in-app updater can find it.
+`./packaging/build-packages.sh` builds the same files into `dist/` locally (needs `dpkg-deb`,
+`rpmbuild`, `flatpak` and the `org.freedesktop.Platform//25.08` runtime).
 
 ## Getting started
 
 Download the client configuration (`.ovpn` file) from your OpenVPN server, then click
 **+ Import** in VPNdeck and pick the file.
+
+## License
+
+VPNdeck is released under the [MIT License](LICENSE). It is built with [Slint](https://slint.dev),
+used under the Slint Royalty-free Desktop, Mobile, and Web Applications License.

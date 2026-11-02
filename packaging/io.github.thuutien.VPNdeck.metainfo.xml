@@ -4,6 +4,7 @@
   <name>VPNdeck</name>
   <summary>Connect to OpenVPN servers</summary>
   <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
   <developer id="io.github.thuutien">
     <name>Bryan Tran</name>
   </developer>
