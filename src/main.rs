@@ -50,6 +50,9 @@ struct App {
 
 fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
+    // Wayland compositors find the window's icon through the desktop entry named by the app id.
+    let app_id = std::env::var("FLATPAK_ID").unwrap_or_else(|_| "vpndeck".into());
+    slint::set_xdg_app_id(app_id)?;
     let (tx, rx) = mpsc::channel::<Msg>();
     let tray = {
         let tx = tx.clone();

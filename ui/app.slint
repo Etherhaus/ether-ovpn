@@ -18,6 +18,9 @@ global Theme {
     out property <color> amber: #C98A0C;
     out property <color> red: #D64545;
     out property <color> muted: Palette.foreground.transparentize(0.45);
+    // The accent is too dark to read as text on a dark background, so links lighten there.
+    out property <color> link: Palette.color-scheme == ColorScheme.dark ? #8C91FF : root.accent;
+    out property <color> link-hover: Palette.color-scheme == ColorScheme.dark ? #B4B7FF : root.accent-hover;
 }
 
 // Lets Tab reach a clickable element and Enter or Space activate it.
@@ -117,7 +120,7 @@ component BigButton inherits Rectangle {
 component Link inherits Text {
     in property <bool> enabled: true;
     callback clicked();
-    color: !root.enabled ? Theme.muted : link-area.has-hover ? Theme.accent-hover : Theme.accent;
+    color: !root.enabled ? Theme.muted : link-area.has-hover ? Theme.link-hover : Theme.link;
     font-weight: 600;
     accessible-role: button;
     accessible-label: root.text;
@@ -132,7 +135,7 @@ component Link inherits Text {
         height: parent.height + 4px;
         border-radius: 4px;
         border-width: 2px;
-        border-color: Theme.accent;
+        border-color: Theme.link;
     }
 
     focus := ActivationScope {
@@ -206,10 +209,32 @@ component ProfileRow inherits Rectangle {
                 overflow: elide;
             }
 
-            if root.saved-password: Text {
-                text: "Password saved";
-                font-size: 12px;
-                color: Theme.muted;
+            // The actions sit on this line so they don't squeeze long names.
+            if root.saved-password || (root.selected && root.can-remove): HorizontalLayout {
+                spacing: 14px;
+                Text {
+                    text: root.saved-password ? "Password saved" : "";
+                    font-size: 12px;
+                    color: Theme.muted;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+
+                if root.selected && root.saved-password: Link {
+                    text: "Forget password";
+                    font-size: 12px;
+                    clicked => {
+                        root.forget-password();
+                    }
+                }
+
+                if root.selected && root.can-remove: Link {
+                    text: "Remove";
+                    font-size: 12px;
+                    clicked => {
+                        root.remove();
+                    }
+                }
             }
         }
 
@@ -220,24 +245,6 @@ component ProfileRow inherits Rectangle {
                 height: 10px;
                 border-radius: 5px;
                 background: Theme.green;
-            }
-        }
-
-        if root.selected && root.saved-password: Link {
-            text: "Forget password";
-            font-size: 13px;
-            vertical-alignment: center;
-            clicked => {
-                root.forget-password();
-            }
-        }
-
-        if root.selected && root.can-remove: Link {
-            text: "Remove";
-            font-size: 13px;
-            vertical-alignment: center;
-            clicked => {
-                root.remove();
             }
         }
     }
@@ -632,9 +639,12 @@ export component AppWindow inherits Window {
                     self.focus();
                 }
             }
+            accepted => {
+                password-edit.focus();
+            }
         }
 
-        LineEdit {
+        password-edit := LineEdit {
             placeholder-text: "Password";
             input-type: password;
             font-size: 16px;
@@ -699,8 +709,13 @@ export component LogWindow inherits Window {
     callback save();
     callback clear();
 
+    // Whether new lines scroll into view; off while the user reads further up.
+    property <bool> follow: true;
+
     changed count => {
-        log-view.content-y = min(0px, log-view.visible-height - log-view.content-height);
+        if root.follow {
+            log-view.content-y = min(0px, log-view.visible-height - log-view.content-height);
+        }
     }
 
     VerticalLayout {
@@ -739,6 +754,7 @@ export component LogWindow inherits Window {
                 vertical-alignment: center;
                 enabled: root.lines.length > 0;
                 clicked => {
+                    root.follow = true;
                     root.clear();
                 }
             }
@@ -752,6 +768,9 @@ export component LogWindow inherits Window {
 
         log-view := ListView {
             vertical-stretch: 1;
+            scrolled => {
+                root.follow = self.content-y <= self.visible-height - self.content-height + 24px;
+            }
             for line in root.lines: Text {
                 text: line;
                 wrap: word-wrap;
