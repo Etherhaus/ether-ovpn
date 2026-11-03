@@ -79,6 +79,7 @@ impl Session {
             .args(["--management-hold", "--management-query-passwords"])
             .args(["--auth-retry", "interact"])
             .args(dns_script_args())
+            .args(privilege_args(config))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -285,6 +286,44 @@ fn dns_script_args() -> Vec<String> {
     ]
 }
 
+/// Profiles made on Debian often say `group nogroup`, which other distros call
+/// `nobody`. OpenVPN only drops privileges after signing in, so a missing name
+/// fails the connection then. Later options win, so these replace the profile's.
+fn privilege_args(config: &Path) -> Vec<String> {
+    let Ok(text) = fs::read_to_string(config) else {
+        return Vec::new();
+    };
+    let names = |file| -> Vec<String> {
+        fs::read_to_string(on_host(file))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| line.split(':').next())
+            .map(str::to_string)
+            .collect()
+    };
+    privilege_overrides(&text, &names("/etc/passwd"), &names("/etc/group"))
+}
+
+fn privilege_overrides(config: &str, users: &[String], groups: &[String]) -> Vec<String> {
+    let directive = |name: &str| {
+        config.lines().find_map(|line| {
+            let mut words = line.split_whitespace();
+            (words.next() == Some(name)).then(|| words.next()).flatten()
+        })
+    };
+    let mut args = Vec::new();
+    for (option, known, fallbacks) in [("user", users, ["nobody"].as_slice()), ("group", groups, &["nogroup", "nobody"])] {
+        let Some(wanted) = directive(option) else { continue };
+        if known.iter().any(|n| n == wanted) {
+            continue;
+        }
+        if let Some(fallback) = fallbacks.iter().find(|f| known.iter().any(|n| n == *f)) {
+            args.extend([format!("--{option}"), fallback.to_string()]);
+        }
+    }
+    args
+}
+
 fn random_hex(bytes: usize) -> io::Result<String> {
     let mut buf = vec![0u8; bytes];
     fs::File::open("/dev/urandom")?.read_exact(&mut buf)?;
@@ -394,5 +433,16 @@ mod tests {
     #[test]
     fn quotes_values() {
         assert_eq!(quote(r#"pa"ss\word"#), r#""pa\"ss\\word""#);
+    }
+
+    #[test]
+    fn replaces_missing_user_and_group() {
+        let names = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let config = "client\nuser nobody\ngroup nogroup\n";
+        // Arch and Fedora have no nogroup.
+        assert_eq!(privilege_overrides(config, &names(&["root", "nobody"]), &names(&["root", "nobody"])), ["--group", "nobody"]);
+        // Debian has both names the profile asks for.
+        assert!(privilege_overrides(config, &names(&["nobody"]), &names(&["nogroup"])).is_empty());
+        assert!(privilege_overrides("client\n", &[], &[]).is_empty());
     }
 }
