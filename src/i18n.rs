@@ -36,7 +36,11 @@ impl Lang {
             .or_else(|_| std::env::var("LC_MESSAGES"))
             .or_else(|_| std::env::var("LANG"))
             .unwrap_or_default();
-        if value.to_lowercase().starts_with("ru") { Lang::Ru } else { Lang::En }
+        if value.to_lowercase().starts_with("ru") {
+            Lang::Ru
+        } else {
+            Lang::En
+        }
     }
 }
 
@@ -390,7 +394,14 @@ pub fn import_summary(lang: Lang, imported: usize, skipped: &[String]) -> String
     if skipped.is_empty() {
         return format!("{}: {}.", s.imported, imported);
     }
-    format!("{}: {}. {}: {}: {}.", s.imported, imported, s.skipped, skipped.len(), skipped.join(", "))
+    format!(
+        "{}: {}. {}: {}: {}.",
+        s.imported,
+        imported,
+        s.skipped,
+        skipped.len(),
+        skipped.join(", ")
+    )
 }
 
 /// Fills the `{}` placeholders of a template in order.
@@ -444,14 +455,23 @@ mod tests {
     fn summary_counts_what_was_skipped() {
         assert_eq!(import_summary(Lang::En, 3, &[]), "Imported: 3.");
         let skipped = vec!["already added".to_string(), "not an .ovpn file".to_string()];
-        assert_eq!(import_summary(Lang::En, 1, &skipped), "Imported: 1. Skipped: 2: already added, not an .ovpn file.");
+        assert_eq!(
+            import_summary(Lang::En, 1, &skipped),
+            "Imported: 1. Skipped: 2: already added, not an .ovpn file."
+        );
         assert_eq!(import_summary(Lang::Ru, 2, &[]), "Импортировано: 2.");
     }
 
     #[test]
     fn fill_replaces_placeholders_in_order() {
-        assert_eq!(fill("Ether {} is available (you have {}).", &["0.2.0", "0.1.4"]), "Ether 0.2.0 is available (you have 0.1.4).");
-        assert_eq!(fill("Could not start OpenVPN: {}", &["denied"]), "Could not start OpenVPN: denied");
+        assert_eq!(
+            fill("Ether {} is available (you have {}).", &["0.2.0", "0.1.4"]),
+            "Ether 0.2.0 is available (you have 0.1.4)."
+        );
+        assert_eq!(
+            fill("Could not start OpenVPN: {}", &["denied"]),
+            "Could not start OpenVPN: denied"
+        );
         // Fewer values than placeholders leaves the rest alone instead of panicking.
         assert_eq!(fill("{} and {}", &["one"]), "one and {}");
         assert_eq!(fill("no placeholders", &["x"]), "no placeholders");

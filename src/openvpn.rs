@@ -16,14 +16,23 @@ use std::thread;
 use std::time::Duration;
 
 pub enum Event {
-    State { name: String, local_ip: String, remote: String },
-    Bytes { rx: u64, tx: u64 },
+    State {
+        name: String,
+        local_ip: String,
+        remote: String,
+    },
+    Bytes {
+        rx: u64,
+        tx: u64,
+    },
     Log(String),
     NeedAuth(AuthRequest),
     /// The server wants a challenge response outside the password prompt (crtext).
     Challenge(Challenge),
     /// Authentication is waiting on the user, and the server may time it out.
-    AuthPending { timeout: Option<u32> },
+    AuthPending {
+        timeout: Option<u32>,
+    },
     AuthFailed,
     /// The openvpn process is gone. Carries an error message unless it was a clean stop.
     Exited(Option<String>),
@@ -44,7 +53,12 @@ pub enum Challenge {
     /// `--static-challenge` in the profile: the response travels with the password.
     Static { echo: bool, concat: bool, text: String },
     /// CRV1: the previous attempt failed, and the response goes in the next password.
-    Dynamic { echo: bool, required: bool, state: String, text: String },
+    Dynamic {
+        echo: bool,
+        required: bool,
+        state: String,
+        text: String,
+    },
     /// crtext (OpenVPN 2.5+): answered with `cr-response` while auth is pending.
     CrText { echo: bool, required: bool, text: String },
 }
@@ -78,10 +92,7 @@ impl Session {
         let port = TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
         let secret = random_hex(16)?;
         let pw_file = write_secret(port, &secret)?;
-        let workdir = workdir
-            .or(config.parent())
-            .unwrap_or(Path::new("/"))
-            .to_path_buf();
+        let workdir = workdir.or(config.parent()).unwrap_or(Path::new("/")).to_path_buf();
 
         let mut cmd = if crate::sandboxed() {
             let mut cmd = Command::new("flatpak-spawn");
@@ -257,18 +268,27 @@ fn parse_message(msg: &str) -> Option<Event> {
         let field = |i: usize| f.get(i).copied().unwrap_or("").to_string();
         // AUTH_PENDING carries the server's timeout in the description field.
         if field(1) == "AUTH_PENDING" {
-            return Some(Event::AuthPending { timeout: field(2).parse().ok() });
+            return Some(Event::AuthPending {
+                timeout: field(2).parse().ok(),
+            });
         }
         let remote = match (field(4), field(5)) {
             (ip, _) if ip.is_empty() => String::new(),
             (ip, port) if port.is_empty() => ip,
             (ip, port) => format!("{ip}:{port}"),
         };
-        return Some(Event::State { name: field(1), local_ip: field(3), remote });
+        return Some(Event::State {
+            name: field(1),
+            local_ip: field(3),
+            remote,
+        });
     }
     if let Some(rest) = msg.strip_prefix("BYTECOUNT:") {
         let (rx, tx) = rest.split_once(',')?;
-        return Some(Event::Bytes { rx: rx.trim().parse().ok()?, tx: tx.trim().parse().ok()? });
+        return Some(Event::Bytes {
+            rx: rx.trim().parse().ok()?,
+            tx: tx.trim().parse().ok()?,
+        });
     }
     if let Some(rest) = msg.strip_prefix("INFOMSG:") {
         // CR_TEXT:<flags>:<challenge_text>, the crtext challenge of OpenVPN 2.5+.
@@ -313,7 +333,11 @@ fn parse_static_challenge(tail: &str) -> Option<Challenge> {
     let (_, rest) = tail.split_once("SC:")?;
     let (flag, text) = rest.split_once(',')?;
     let flag: u32 = flag.trim().parse().ok()?;
-    Some(Challenge::Static { echo: flag & 1 != 0, concat: flag & 2 != 0, text: text.to_string() })
+    Some(Challenge::Static {
+        echo: flag & 1 != 0,
+        concat: flag & 2 != 0,
+        text: text.to_string(),
+    })
 }
 
 /// `<flags>:<state_id>:<username_base64>:<challenge_text>`, where the text may
@@ -363,8 +387,16 @@ fn base64(data: &str) -> String {
         let n = u32::from(b[0]) << 16 | u32::from(b[1]) << 8 | u32::from(b[2]);
         out.push(ALPHABET[(n >> 18) as usize & 63] as char);
         out.push(ALPHABET[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 { ALPHABET[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if chunk.len() > 2 { ALPHABET[n as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            ALPHABET[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[n as usize & 63] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -380,7 +412,9 @@ fn on_host(path: &str) -> PathBuf {
 }
 
 fn find_openvpn() -> Option<&'static str> {
-    ["/usr/sbin/openvpn", "/usr/bin/openvpn"].into_iter().find(|p| on_host(p).exists())
+    ["/usr/sbin/openvpn", "/usr/bin/openvpn"]
+        .into_iter()
+        .find(|p| on_host(p).exists())
 }
 
 /// Hooks up the distro's helper script so DNS servers pushed by the gateway are applied.
@@ -388,7 +422,9 @@ fn dns_script_args() -> Vec<String> {
     let resolved = "/etc/openvpn/update-systemd-resolved";
     let resolvconf = "/etc/openvpn/update-resolv-conf";
     let uses_resolved = fs::read_to_string(on_host("/etc/resolv.conf")).is_ok_and(|s| s.contains("127.0.0.53"));
-    let has_resolvconf = ["/usr/sbin/resolvconf", "/sbin/resolvconf"].into_iter().any(|p| on_host(p).exists());
+    let has_resolvconf = ["/usr/sbin/resolvconf", "/sbin/resolvconf"]
+        .into_iter()
+        .any(|p| on_host(p).exists());
     let script = if on_host(resolved).exists() && uses_resolved {
         resolved
     } else if on_host(resolvconf).exists() && has_resolvconf {
@@ -435,7 +471,10 @@ fn privilege_overrides(config: &str, users: &[String], groups: &[String]) -> Vec
         })
     };
     let mut args = Vec::new();
-    for (option, known, fallbacks) in [("user", users, ["nobody"].as_slice()), ("group", groups, &["nogroup", "nobody"])] {
+    for (option, known, fallbacks) in [
+        ("user", users, ["nobody"].as_slice()),
+        ("group", groups, &["nogroup", "nobody"]),
+    ] {
         let Some(wanted) = directive(option) else { continue };
         if known.iter().any(|n| n == wanted) {
             continue;
@@ -461,7 +500,12 @@ fn write_secret(port: u16, secret: &str) -> io::Result<PathBuf> {
     }
     let dir = private_dir(&dir.join("ether"))?;
     let path = dir.join(format!("mgmt-{port}.pw"));
-    let mut f = OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&path)?;
+    let mut f = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&path)?;
     writeln!(f, "{secret}")?;
     Ok(path)
 }
@@ -517,12 +561,18 @@ mod tests {
         assert_eq!(req.realm, "Private Key");
         assert!(!req.needs_username);
 
-        assert!(matches!(parse_message("PASSWORD:Verification Failed: 'Auth'"), Some(Event::AuthFailed)));
+        assert!(matches!(
+            parse_message("PASSWORD:Verification Failed: 'Auth'"),
+            Some(Event::AuthFailed)
+        ));
     }
 
     #[test]
     fn parses_bytecount() {
-        assert!(matches!(parse_message("BYTECOUNT:1024,2048"), Some(Event::Bytes { rx: 1024, tx: 2048 })));
+        assert!(matches!(
+            parse_message("BYTECOUNT:1024,2048"),
+            Some(Event::Bytes { rx: 1024, tx: 2048 })
+        ));
     }
 
     /// The line the TimeWeb server actually sends, taken from a real connection log.
@@ -535,7 +585,11 @@ mod tests {
         assert!(req.needs_username);
         assert_eq!(
             req.challenge,
-            Some(Challenge::Static { echo: true, concat: false, text: "Enter code".to_string() })
+            Some(Challenge::Static {
+                echo: true,
+                concat: false,
+                text: "Enter code".to_string()
+            })
         );
 
         // FORMAT=1 asks for the response to be glued to the password instead.
@@ -544,7 +598,11 @@ mod tests {
         };
         assert_eq!(
             req.challenge,
-            Some(Challenge::Static { echo: false, concat: true, text: "Enter code".to_string() })
+            Some(Challenge::Static {
+                echo: false,
+                concat: true,
+                text: "Enter code".to_string()
+            })
         );
 
         // A preferred username may precede the challenge.
@@ -555,15 +613,25 @@ mod tests {
         };
         assert_eq!(
             req.challenge,
-            Some(Challenge::Static { echo: true, concat: false, text: "Please enter token PIN".to_string() })
+            Some(Challenge::Static {
+                echo: true,
+                concat: false,
+                text: "Please enter token PIN".to_string()
+            })
         );
     }
 
     #[test]
     fn parses_dynamic_challenge() {
-        let Some(Event::Challenge(Challenge::Dynamic { echo, required, state, text })) = parse_message(
+        let Some(Event::Challenge(Challenge::Dynamic {
+            echo,
+            required,
+            state,
+            text,
+        })) = parse_message(
             "PASSWORD:Verification Failed: 'Auth' ['CRV1:R,E:Om01u7Fh4LrGBS7uh0SWmzwabUiGiW6l:Y3Ix:Please enter token PIN']",
-        ) else {
+        )
+        else {
             panic!("expected a dynamic challenge");
         };
         assert!(echo);
@@ -580,7 +648,10 @@ mod tests {
         assert_eq!(text, "Code: 123456");
 
         // Without a CRV1 payload it stays a plain failure.
-        assert!(matches!(parse_message("PASSWORD:Verification Failed: 'Auth'"), Some(Event::AuthFailed)));
+        assert!(matches!(
+            parse_message("PASSWORD:Verification Failed: 'Auth'"),
+            Some(Event::AuthFailed)
+        ));
     }
 
     #[test]
@@ -637,7 +708,11 @@ mod tests {
         let static_req = AuthRequest {
             realm: "Auth".into(),
             needs_username: true,
-            challenge: Some(Challenge::Static { echo: true, concat: false, text: "Enter code".into() }),
+            challenge: Some(Challenge::Static {
+                echo: true,
+                concat: false,
+                text: "Enter code".into(),
+            }),
         };
         session.send_auth(&static_req, "foo", "bar", "8675309");
         assert_eq!(input.next().unwrap(), r#"username "Auth" "foo""#);
@@ -646,7 +721,11 @@ mod tests {
         let concat_req = AuthRequest {
             realm: "Auth".into(),
             needs_username: true,
-            challenge: Some(Challenge::Static { echo: false, concat: true, text: "Enter code".into() }),
+            challenge: Some(Challenge::Static {
+                echo: false,
+                concat: true,
+                text: "Enter code".into(),
+            }),
         };
         session.send_auth(&concat_req, "foo", "bar", "8675309");
         assert_eq!(input.next().unwrap(), r#"username "Auth" "foo""#);
@@ -664,13 +743,20 @@ mod tests {
         };
         session.send_auth(&dynamic_req, "cr1", "bar", "8675309");
         assert_eq!(input.next().unwrap(), r#"username "Auth" "cr1""#);
-        assert_eq!(input.next().unwrap(), r#"password "Auth" "CRV1::Om01u7Fh4LrGBS7uh0SWmzwabUiGiW6l::8675309""#);
+        assert_eq!(
+            input.next().unwrap(),
+            r#"password "Auth" "CRV1::Om01u7Fh4LrGBS7uh0SWmzwabUiGiW6l::8675309""#
+        );
 
         session.send_cr_response("8675309");
         assert_eq!(input.next().unwrap(), "cr-response ODY3NTMwOQ==");
 
         // Without a challenge the password goes out untouched.
-        let plain = AuthRequest { realm: "Auth".into(), needs_username: true, challenge: None };
+        let plain = AuthRequest {
+            realm: "Auth".into(),
+            needs_username: true,
+            challenge: None,
+        };
         session.send_auth(&plain, "foo", "bar", "");
         assert_eq!(input.next().unwrap(), r#"username "Auth" "foo""#);
         assert_eq!(input.next().unwrap(), r#"password "Auth" "bar""#);
@@ -700,20 +786,24 @@ mod tests {
         let mut input = BufReader::new(stream).lines().map(Result::unwrap);
         out.write_all(b"ENTER PASSWORD:").unwrap();
         assert_eq!(input.next().unwrap(), "s3cret");
-        out.write_all(b"SUCCESS: password is correct\r\n>HOLD:Waiting for hold release:0\r\n").unwrap();
+        out.write_all(b"SUCCESS: password is correct\r\n>HOLD:Waiting for hold release:0\r\n")
+            .unwrap();
         assert_eq!(input.next().unwrap(), "state on");
         assert_eq!(input.next().unwrap(), "bytecount 2");
         assert_eq!(input.next().unwrap(), "hold release");
         assert_eq!(input.next().unwrap(), "hold release");
         out.write_all(b">PASSWORD:Need 'Auth' username/password\r\n").unwrap();
-        let Event::NeedAuth(req) = rx.recv().unwrap() else { panic!("expected auth request") };
+        let Event::NeedAuth(req) = rx.recv().unwrap() else {
+            panic!("expected auth request")
+        };
 
         let session = Session { shared: shared.clone() };
         session.send_auth(&req, "bryan", "p\"w", "");
         assert_eq!(input.next().unwrap(), r#"username "Auth" "bryan""#);
         assert_eq!(input.next().unwrap(), r#"password "Auth" "p\"w""#);
 
-        out.write_all(b">STATE:1,CONNECTED,SUCCESS,192.168.3.2,198.51.100.7,1194,,\r\n").unwrap();
+        out.write_all(b">STATE:1,CONNECTED,SUCCESS,192.168.3.2,198.51.100.7,1194,,\r\n")
+            .unwrap();
         assert!(matches!(rx.recv().unwrap(), Event::State { name, .. } if name == "CONNECTED"));
 
         session.disconnect();
@@ -733,7 +823,10 @@ mod tests {
         let names = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         let config = "client\nuser nobody\ngroup nogroup\n";
         // Arch and Fedora have no nogroup.
-        assert_eq!(privilege_overrides(config, &names(&["root", "nobody"]), &names(&["root", "nobody"])), ["--group", "nobody"]);
+        assert_eq!(
+            privilege_overrides(config, &names(&["root", "nobody"]), &names(&["root", "nobody"])),
+            ["--group", "nobody"]
+        );
         // Debian has both names the profile asks for.
         assert!(privilege_overrides(config, &names(&["nobody"]), &names(&["nogroup"])).is_empty());
         assert!(privilege_overrides("client\n", &[], &[]).is_empty());

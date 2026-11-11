@@ -4,7 +4,7 @@ use ksni::blocking::{Handle, TrayMethods};
 use ksni::menu::{StandardItem, SubMenu};
 use ksni::{Icon, MenuItem, ToolTip};
 
-use crate::i18n::{fill, Lang, Strings};
+use crate::i18n::{Lang, Strings, fill};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum Status {
@@ -44,7 +44,13 @@ pub struct Tray {
 /// Starts the tray icon, or returns `None` when the desktop has no tray to show it in.
 pub fn spawn(send: impl Fn(Command) + Send + 'static) -> Option<Handle<Tray>> {
     // A sandboxed app can't own the StatusNotifierItem-<pid> bus name.
-    Tray { state: State::default(), send: Box::new(send) }.disable_dbus_name(crate::sandboxed()).spawn().ok()
+    Tray {
+        state: State::default(),
+        send: Box::new(send),
+    }
+    .disable_dbus_name(crate::sandboxed())
+    .spawn()
+    .ok()
 }
 
 pub fn set_state(handle: &Handle<Tray>, state: State) {
@@ -72,11 +78,18 @@ impl ksni::Tray for Tray {
 
     fn icon_pixmap(&self) -> Vec<Icon> {
         let svg = icon_svg(self.state.status);
-        [22, 32, 48, 64].into_iter().filter_map(|size| render(&svg, size)).collect()
+        [22, 32, 48, 64]
+            .into_iter()
+            .filter_map(|size| render(&svg, size))
+            .collect()
     }
 
     fn tool_tip(&self) -> ToolTip {
-        ToolTip { title: "Ether".into(), description: self.state.status_text.clone(), ..Default::default() }
+        ToolTip {
+            title: "Ether".into(),
+            description: self.state.status_text.clone(),
+            ..Default::default()
+        }
     }
 
     fn activate(&mut self, _x: i32, _y: i32) {
@@ -87,7 +100,12 @@ impl ksni::Tray for Tray {
         let s = &self.state;
         let t = Strings::new(s.lang);
         let mut menu = vec![
-            StandardItem { label: s.status_text.clone(), enabled: false, ..Default::default() }.into(),
+            StandardItem {
+                label: s.status_text.clone(),
+                enabled: false,
+                ..Default::default()
+            }
+            .into(),
             MenuItem::Separator,
             item(t.tray_show, true, || Command::ShowWindow),
         ];
@@ -119,11 +137,21 @@ impl ksni::Tray for Tray {
                     .into()
                 })
                 .collect();
-            menu.push(SubMenu { label: t.tray_connect.into(), enabled: !s.profiles.is_empty(), submenu, ..Default::default() }.into());
+            menu.push(
+                SubMenu {
+                    label: t.tray_connect.into(),
+                    enabled: !s.profiles.is_empty(),
+                    submenu,
+                    ..Default::default()
+                }
+                .into(),
+            );
         }
         menu.push(MenuItem::Separator);
         match &s.update {
-            Some(version) => menu.push(item(t.tray_update_to.replace("{}", version), true, || Command::ShowWindow)),
+            Some(version) => menu.push(item(t.tray_update_to.replace("{}", version), true, || {
+                Command::ShowWindow
+            })),
             None => menu.push(item(t.tray_check_updates, true, || Command::CheckUpdates)),
         }
         menu.push(item(t.tray_quit, true, || Command::Quit));
@@ -156,7 +184,11 @@ fn render(svg: &str, size: u32) -> Option<Icon> {
     let tree = resvg::usvg::Tree::from_str(svg, &Default::default()).ok()?;
     let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size)?;
     let scale = size as f32 / tree.size().width();
-    resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
     // StatusNotifierItem wants straight-alpha ARGB32 in network byte order.
     let data = pixmap
         .pixels()
@@ -166,7 +198,11 @@ fn render(svg: &str, size: u32) -> Option<Icon> {
             [c.alpha(), c.red(), c.green(), c.blue()]
         })
         .collect();
-    Some(Icon { width: size as i32, height: size as i32, data })
+    Some(Icon {
+        width: size as i32,
+        height: size as i32,
+        data,
+    })
 }
 
 #[cfg(test)]
