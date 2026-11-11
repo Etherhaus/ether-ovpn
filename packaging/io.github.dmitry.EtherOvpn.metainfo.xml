@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.thuutien.VPNdeck</id>
-  <name>VPNdeck</name>
-  <summary>Connect to OpenVPN servers</summary>
+  <id>io.github.dmitry.EtherOvpn</id>
+  <name>Ether</name>
+  <summary>OpenVPN client for Linux</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
-  <developer id="io.github.thuutien">
-    <name>Bryan Tran</name>
+  <developer id="io.github.dmitry">
+    <name>Dmitry</name>
   </developer>
   <description>
     <p>
-      VPNdeck is a simple desktop client for OpenVPN. Import the .ovpn profile
+      Ether is a simple desktop client for OpenVPN. Import the .ovpn profile
       from your OpenVPN server and connect with one click.
     </p>
     <ul>
@@ -25,22 +25,28 @@
     </ul>
     <p>Needs OpenVPN 2.4 or newer installed on the system (sudo apt install openvpn).</p>
   </description>
-  <launchable type="desktop-id">io.github.thuutien.VPNdeck.desktop</launchable>
-  <url type="homepage">https://github.com/thuutien/vpndeck</url>
-  <url type="bugtracker">https://github.com/thuutien/vpndeck/issues</url>
+  <launchable type="desktop-id">io.github.dmitry.EtherOvpn.desktop</launchable>
+  <url type="homepage">https://github.com/dmitry/ether-ovpn</url>
+  <url type="bugtracker">https://github.com/dmitry/ether-ovpn/issues</url>
   <screenshots>
     <screenshot type="default">
       <caption>Connected to a VPN</caption>
-      <image>https://raw.githubusercontent.com/thuutien/vpndeck/main/docs/screenshot.png</image>
+      <image>https://raw.githubusercontent.com/dmitry/ether-ovpn/main/docs/screenshot.png</image>
     </screenshot>
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.3.0" date="2026-11-11">
+      <description>
+        <p>Renames the app to Ether, gives it a neutral monogram icon and a cleaner interface: a quieter palette, a status card built around the connection state, segmented theme and language pickers, and a lighter log window.</p>
+        <p>Adds profiles dropped onto the window, pasted from the clipboard or downloaded from a link, renaming, a download-speed graph, desktop notifications, automatic reconnection, start with the session, connect on launch, a theme that follows the system, a filterable log with warnings and errors highlighted, a diagnostics button, keyboard shortcuts, and a warning when a profile runs programs as root.</p>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-11-11">
       <description><p>Adds two-factor authentication for static challenges, CRV1 and crtext, so servers that ask for a code now connect. Imports several .ovpn files at once and skips the ones already in the list, adds a profile search, an English and Russian interface, and a dark and light theme.</p></description>
     </release>
     <release version="0.1.4" date="2026-11-02">
-      <description><p>Fixes connections failing right after sign-in on Arch, Fedora and other distros when a profile asks for the Debian-only group nogroup. Also shows the VPNdeck icon on Wayland, makes links easier to read in dark mode and gives long profile names more room.</p></description>
+      <description><p>Fixes connections failing right after sign-in on Arch, Fedora and other distros when a profile asks for the Debian-only group nogroup. Also shows the Ether icon on Wayland, makes links easier to read in dark mode and gives long profile names more room.</p></description>
     </release>
     <release version="0.1.3" date="2026-11-02">
       <description><p>Adds an .rpm package for Fedora and openSUSE. File dialogs no longer freeze the window, removing a profile asks for confirmation, and buttons and links work from the keyboard and with screen readers.</p></description>

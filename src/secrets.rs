@@ -1,9 +1,9 @@
 //! Saved VPN passwords. They live in the desktop keyring (GNOME Keyring, KWallet)
-//! through the Secret Service API, never in vpndeck's own files.
+//! through the Secret Service API, never in Ether's own files.
 
 use std::path::Path;
 
-const SERVICE: &str = "vpndeck";
+const SERVICE: &str = "ether-ovpn";
 /// Every password prompt openvpn can raise for a profile, so they can all be forgotten.
 const REALMS: [&str; 2] = ["Auth", "Private Key"];
 
@@ -41,7 +41,7 @@ mod tests {
     #[test]
     #[ignore]
     fn keyring_round_trip() {
-        let profile = Path::new("/nonexistent/vpndeck-keyring-test.ovpn");
+        let profile = Path::new("/nonexistent/ether-ovpn-keyring-test.ovpn");
         save(profile, "Auth", "s3cret pass").unwrap();
         assert_eq!(load(profile, "Auth").unwrap().as_deref(), Some("s3cret pass"));
         forget_all(profile).unwrap();

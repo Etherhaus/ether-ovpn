@@ -4,7 +4,7 @@ use ksni::blocking::{Handle, TrayMethods};
 use ksni::menu::{StandardItem, SubMenu};
 use ksni::{Icon, MenuItem, ToolTip};
 
-use crate::i18n::{Lang, Strings};
+use crate::i18n::{fill, Lang, Strings};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum Status {
@@ -32,6 +32,8 @@ pub struct State {
     pub busy: bool,
     pub update: Option<String>,
     pub lang: Lang,
+    /// The profile connected to most recently, offered as a one-click entry.
+    pub last: Option<(usize, String)>,
 }
 
 pub struct Tray {
@@ -61,11 +63,11 @@ fn item(label: impl Into<String>, enabled: bool, command: fn() -> Command) -> Me
 
 impl ksni::Tray for Tray {
     fn id(&self) -> String {
-        "vpndeck".into()
+        "ether-ovpn".into()
     }
 
     fn title(&self) -> String {
-        "VPNdeck".into()
+        "Ether".into()
     }
 
     fn icon_pixmap(&self) -> Vec<Icon> {
@@ -74,7 +76,7 @@ impl ksni::Tray for Tray {
     }
 
     fn tool_tip(&self) -> ToolTip {
-        ToolTip { title: "VPNdeck".into(), description: self.state.status_text.clone(), ..Default::default() }
+        ToolTip { title: "Ether".into(), description: self.state.status_text.clone(), ..Default::default() }
     }
 
     fn activate(&mut self, _x: i32, _y: i32) {
@@ -92,6 +94,18 @@ impl ksni::Tray for Tray {
         if s.busy {
             menu.push(item(t.disconnect, true, || Command::Disconnect));
         } else {
+            // The profile used last is one click away, above the full list.
+            if let Some((index, name)) = &s.last {
+                let index = *index;
+                menu.push(
+                    StandardItem {
+                        label: fill(t.tray_connect_last, &[name]),
+                        activate: Box::new(move |tray: &mut Tray| (tray.send)(Command::Connect(index))),
+                        ..Default::default()
+                    }
+                    .into(),
+                );
+            }
             let submenu = s
                 .profiles
                 .iter()
@@ -117,11 +131,11 @@ impl ksni::Tray for Tray {
     }
 }
 
-/// The tray version of the app icon: the shield without its tile, plus a status dot.
+/// The tray version of the app icon: the tunnel mark on its tile, plus a status dot.
 fn icon_svg(status: Status) -> String {
     let (top, bottom) = match status {
-        Status::Idle => ("#A3A8BA", "#646A80"),
-        _ => ("#6D7CFF", "#3127A8"),
+        Status::Idle => ("#4A5163", "#333947"),
+        _ => ("#6D7CFF", "#3B45C9"),
     };
     let badge = match status {
         Status::Idle => String::new(),
@@ -137,15 +151,15 @@ fn icon_svg(status: Status) -> String {
       <stop offset="1" stop-color="{bottom}"/>
     </linearGradient>
   </defs>
-  <path d="M32 3 L57 12 V31 C57 46 47 56 32 61 C17 56 7 46 7 31 V12 Z" fill="url(#g)"/>
-  <path d="M21 47 V33 A11 11 0 0 1 43 33 V47 Z" fill="#FFFFFF"/>
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#g)"/>
+  <path d="M14 52 L14 30 A18 18 0 0 1 50 30 L50 52 L42 52 L42 30 A10 10 0 0 0 22 30 L22 52 Z" fill="#FFFFFF"/>
   {badge}
 </svg>"##
     )
 }
 
 fn badge(color: &str) -> String {
-    format!(r##"<circle cx="49" cy="49" r="12" fill="{color}" stroke="#FFFFFF" stroke-width="4"/>"##)
+    format!(r##"<circle cx="50" cy="50" r="11" fill="{color}" stroke="#FFFFFF" stroke-width="3.5"/>"##)
 }
 
 fn render(svg: &str, size: u32) -> Option<Icon> {

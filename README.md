@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/vpndeck.svg" alt="VPNdeck icon" width="112">
+  <img src="assets/ether.svg" alt="Ether icon" width="112">
 </p>
 
-<h1 align="center">VPNdeck</h1>
+<h1 align="center">Ether</h1>
 
 <p align="center">
   A small desktop client for OpenVPN on Linux, written in Rust with <a href="https://slint.dev">Slint</a>.
@@ -10,33 +10,53 @@
   Works with OpenVPN 2.4 or newer, including servers that ask for a 2FA code.
 </p>
 
-![VPNdeck connected to a VPN](docs/screenshot.png)
+![Ether connected to a VPN](docs/screenshot.png)
 
 | Dark | Light |
 |---|---|
-| ![VPNdeck in dark mode](docs/screenshot-dark.png) | ![VPNdeck in light mode](docs/screenshot-light.png) |
+| ![Ether in dark mode](docs/screenshot-dark.png) | ![Ether in light mode](docs/screenshot-light.png) |
 
 ## Features
 
-- Import one or many `.ovpn` profiles at once (stored privately under `~/.config/vpndeck`).
+- Import one or many `.ovpn` profiles at once (stored privately under `~/.config/ether`).
   Files that are already in the list are skipped, so re-importing a folder is safe
-- Search the profile list once it grows past a handful of servers
-- Connect / disconnect with live status, VPN address, server and traffic counters
+- Three more ways in: drop files onto the window, paste a profile from the clipboard, or
+  download one from a link
+- Rename profiles, search the list once it grows past a handful of servers
+- Connect / disconnect with live status, VPN address, server and traffic counters, plus a
+  download-speed graph for the current session
 - Username/password and private-key password prompts. The username is remembered, and the
   password can be saved in your desktop keyring (GNOME Keyring / KWallet) for automatic sign-in
 - Two-factor authentication: static challenge, CRV1 and crtext (see below)
-- English and Russian, dark and light themes, both switchable in Settings
-- Live OpenVPN log
-- System tray icon showing connection status, with quick connect/disconnect.
-  Closing the window keeps VPNdeck running in the tray.
+- Reconnects on its own when a working tunnel drops (three attempts, five seconds apart)
+- Desktop notifications when a connection starts, drops or fails
+- English and Russian; dark, light or follow-the-system theme
+- Live OpenVPN log with warnings and errors highlighted, a filter box, and a
+  "Copy diagnostics" button that puts the version, OS, OpenVPN version and the last 50 lines
+  on the clipboard for a support ticket
+- System tray icon showing connection status, with one-click connect to the last profile.
+  Closing the window keeps Ether running in the tray.
+- Start with the session and connect on launch, both optional
 - Checks GitHub for new releases and updates itself (tarball in place, .deb through apt, Flatpak through flatpak)
 - Applies DNS pushed by the server when `update-systemd-resolved` or `update-resolv-conf` is installed
+- Warns when an imported profile carries `up`, `down`, `plugin` or another directive that makes
+  OpenVPN run a program as root
+
+## Keyboard
+
+| Keys | Action |
+|---|---|
+| `Ctrl+F` | Focus the profile search |
+| `Ctrl+L` | Open the log |
+| `Up` / `Down` | Move through the profile list |
+| `Enter` | Connect, or disconnect while connected |
+| `Esc` | Clear the search, or close a dialog |
 
 ## Two-factor authentication
 
-VPNdeck answers every challenge/response variant OpenVPN servers use:
+Ether answers every challenge/response variant OpenVPN servers use:
 
-| The server asks for | VPNdeck sends |
+| The server asks for | Ether sends |
 |---|---|
 | `--static-challenge` (SCRV1) | `SCRV1:<base64 password>:<base64 code>` |
 | `--static-challenge` with FORMAT=1 | the code appended to the password |
@@ -52,7 +72,7 @@ code. The wire format is OpenVPN's own
 
 The interface is available in English and Russian. The first start follows the desktop locale
 (`LANG`), and Settings switches it at any time; the choice is stored in
-`~/.config/vpndeck/settings.json`. Every string lives in `src/i18n.rs`, so adding a language is
+`~/.config/ether/settings.json`. Every string lives in `src/i18n.rs`, so adding a language is
 one more column in that table.
 
 ## Requirements
@@ -64,25 +84,25 @@ sudo apt install openvpn
 ```
 
 The app runs as your user. `openvpn` is started through `pkexec`, so you'll get the normal
-administrator prompt when connecting. VPNdeck talks to it over OpenVPN's management interface
+administrator prompt when connecting. Ether talks to it over OpenVPN's management interface
 on a random localhost port protected by a one-time password.
 
 ## Install
 
 OpenVPN must be installed on the system whichever package you use (see Requirements).
-Download a package from the [latest release](https://github.com/thuutien/vpndeck/releases/latest).
+Download a package from the [latest release](https://github.com/dmitry/ether-ovpn/releases/latest).
 The prebuilt packages are for x86_64.
 
 **Debian, Ubuntu, Linux Mint** (`.deb`, needs Ubuntu 24.04+, Mint 22+ or Debian 13; pulls in `openvpn`):
 
 ```bash
-sudo apt install ./vpndeck_*_amd64.deb
+sudo apt install ./ether-ovpn_*_amd64.deb
 ```
 
 **Any distro with Flatpak** (`.flatpak`; the Freedesktop runtime is fetched from Flathub if needed):
 
 ```bash
-flatpak install --user ./vpndeck-*-x86_64.flatpak
+flatpak install --user ./ether-ovpn-*-x86_64.flatpak
 ```
 
 The Flatpak starts OpenVPN on the host through `flatpak-spawn --host`, so it is not meaningfully
@@ -91,8 +111,8 @@ sandboxed: it needs the same root access to run a VPN as the other packages.
 **Tarball** (`.tar.gz`, needs glibc 2.39+). It installs to `~/.local/bin`, plus the app icon and an app-menu entry:
 
 ```bash
-tar xzf vpndeck-*-x86_64-linux.tar.gz
-cd vpndeck-*-x86_64-linux
+tar xzf ether-ovpn-*-x86_64-linux.tar.gz
+cd ether-ovpn-*-x86_64-linux
 packaging/install.sh
 ```
 
@@ -108,7 +128,7 @@ packaging/install.sh
 ## Releasing
 
 Bump the version in `Cargo.toml` and add a `<release>` entry to
-`packaging/io.github.thuutien.VPNdeck.metainfo.xml`, then push a `v<version>` tag. The Release
+`packaging/io.github.dmitry.EtherOvpn.metainfo.xml`, then push a `v<version>` tag. The Release
 workflow builds the tarball, .deb, .rpm, Flatpak and `SHA256SUMS` on Ubuntu 24.04 (so the binary
 runs on glibc 2.39 and newer), attaches them to the GitHub release for the tag and publishes it,
 which is where the in-app updater looks. To write the release notes yourself, create a draft
@@ -117,13 +137,30 @@ release for the tag before pushing it.
 `./packaging/build-packages.sh` builds the same files into `dist/` locally (needs `dpkg-deb`,
 `rpmbuild`, `flatpak` and the `org.freedesktop.Platform//25.08` runtime).
 
+### Signing releases
+
+`SHA256SUMS` only proves a download matches the release page. To prove the release page is
+ours, sign the files with [minisign](https://jedisct1.github.io/minisign/) and attach the
+`.minisig` files to the release:
+
+```bash
+minisign -G                                   # once, creates ~/.minisign/minisign.key
+./packaging/sign-release.sh dist/*            # writes dist/*.minisig
+```
+
+Then put the base64 line of `~/.minisign/minisign.pub` (the one after `untrusted comment:`)
+into `PUBLIC_KEY` in `src/updater.rs` and rebuild. From then on Ether refuses to install an
+update whose signature doesn't match. While `PUBLIC_KEY` is empty the check is skipped, so
+signing and filling in the key have to happen together.
+
 ## Getting started
 
 Download the client configuration (`.ovpn` files) from your OpenVPN server, then click
-**+ Import** in VPNdeck and pick one or more files. On a fresh install the same button sits in
-the middle of the window.
+**+ Import** in Ether and pick one or more files. On a fresh install the same button sits in
+the middle of the window. Dropping the files onto the window, pasting a profile from the
+clipboard and downloading one from a link all work too.
 
 ## License
 
-VPNdeck is released under the [MIT License](LICENSE). It is built with [Slint](https://slint.dev),
+Ether is released under the [MIT License](LICENSE). It is built with [Slint](https://slint.dev),
 used under the Slint Royalty-free Desktop, Mobile, and Web Applications License.

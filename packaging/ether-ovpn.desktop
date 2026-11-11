@@ -1,11 +1,11 @@
 [Desktop Entry]
 Type=Application
-Name=VPNdeck
+Name=Ether
 GenericName=VPN Client
-Comment=Connect to OpenVPN servers
-Exec=vpndeck
-Icon=vpndeck
+Comment=OpenVPN client for Linux
+Exec=ether-ovpn
+Icon=ether-ovpn
 Terminal=false
 Categories=Network;
 Keywords=vpn;openvpn;tunnel;
-StartupWMClass=vpndeck
+StartupWMClass=ether-ovpn

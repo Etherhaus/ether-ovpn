@@ -86,7 +86,7 @@ labels! {
     // Update banner
     whats_new, set_whats_new => ("What's new", "Что нового"),
     update_now, set_update_now => ("Update now", "Обновить"),
-    restart_app, set_restart_app => ("Restart VPNdeck", "Перезапустить VPNdeck"),
+    restart_app, set_restart_app => ("Restart Ether", "Перезапустить Ether"),
     dismiss, set_dismiss => ("Dismiss", "Скрыть"),
 
     // Status card
@@ -113,6 +113,45 @@ labels! {
     forget_password, set_forget_password => ("Forget password", "Забыть пароль"),
     remove, set_remove => ("Remove", "Удалить"),
     search_placeholder, set_search_placeholder => ("Search profiles", "Поиск по профилям"),
+    search_empty, set_search_empty => ("No profiles match", "Профили не найдены"),
+
+    // Add-profile dialog
+    add_title, set_add_title => ("Add a profile", "Добавить профиль"),
+    add_files, set_add_files => ("Choose files…", "Выбрать файлы…"),
+    add_paste, set_add_paste => ("Paste from clipboard", "Вставить из буфера"),
+    add_url, set_add_url => ("Import from link", "Импортировать по ссылке"),
+    add_url_placeholder, set_add_url_placeholder => ("https://example.com/profile.ovpn", "https://example.com/profile.ovpn"),
+    add_hint, set_add_hint => (
+        "You can also drop .ovpn files onto the window.",
+        "Можно перетащить .ovpn файлы прямо в окно."
+    ),
+
+    // Rename dialog
+    rename_title, set_rename_title => ("Rename profile", "Переименовать профиль"),
+    rename, set_rename => ("Rename", "Переименовать"),
+    rename_empty, set_rename_empty => ("The name can't be empty.", "Имя не может быть пустым."),
+    rename_taken, set_rename_taken => ("Another profile already has that name.", "Такое имя уже занято."),
+
+    // Profile window
+    view, set_view => ("View", "Просмотр"),
+    view_title, set_view_title => ("Profile", "Профиль"),
+    view_check, set_view_check => ("Check connection", "Проверить подключение"),
+    view_checking, set_view_checking => ("Checking...", "Проверяю..."),
+    view_copy, set_view_copy => ("Copy", "Копировать"),
+    view_close, set_view_close => ("Close", "Закрыть"),
+    view_risky, set_view_risky => (
+        "This profile runs programs as root. Only connect if it came from your own administrator.",
+        "Этот профиль запускает программы от root. Подключайтесь, только если он пришёл от вашего администратора."
+    ),
+    check_file, set_check_file => ("Profile file", "Файл профиля"),
+    check_remote, set_check_remote => ("Server line", "Строка remote"),
+    check_files, set_check_files => ("Certificate files", "Файлы сертификатов"),
+    check_dns, set_check_dns => ("Name lookup", "Разрешение имени"),
+    check_port, set_check_port => ("Server port", "Порт сервера"),
+    check_remote_missing, set_check_remote_missing => ("no remote line", "строка remote не найдена"),
+    check_udp_skipped, set_check_udp_skipped => ("UDP profile, not probed", "Профиль UDP, не проверяется"),
+    check_passed, set_check_passed => ("ok", "ок"),
+    check_failed, set_check_failed => ("failed", "ошибка"),
 
     // Empty state
     empty_title, set_empty_title => ("No profiles yet", "Профилей пока нет"),
@@ -129,7 +168,13 @@ labels! {
     theme, set_theme => ("Theme", "Тема"),
     dark, set_dark => ("Dark", "Тёмная"),
     light, set_light => ("Light", "Светлая"),
+    system, set_system => ("System", "Как в системе"),
     language, set_language => ("Language", "Язык"),
+    startup, set_startup => ("Startup", "Запуск"),
+    autostart, set_autostart => ("Start with the system", "Запускать при входе"),
+    auto_connect, set_auto_connect => ("Connect on launch", "Подключаться при запуске"),
+    notifications, set_notifications => ("Notifications", "Уведомления"),
+    notify_on, set_notify_on => ("Show connection notifications", "Показывать уведомления"),
     close, set_close => ("Close", "Закрыть"),
 
     // Remove confirmation
@@ -152,13 +197,14 @@ labels! {
     username, set_username => ("Username", "Имя пользователя"),
     password, set_password => ("Password", "Пароль"),
     code, set_code => ("2FA code", "Код 2FA"),
+    show_password, set_show_password => ("Show password", "Показать пароль"),
     remember_password, set_remember_password => ("Remember password", "Запомнить пароль"),
     change_password, set_change_password => ("Change password", "Сменить пароль"),
     sign_in, set_sign_in => ("Sign in", "Войти"),
     continue_button, set_continue_button => ("Continue", "Продолжить"),
 
     // Log window
-    log_title, set_log_title => ("VPNdeck log", "Журнал VPNdeck"),
+    log_title, set_log_title => ("Ether log", "Журнал Ether"),
     connection_log, set_connection_log => ("Connection log", "Журнал подключения"),
     copy_all, set_copy_all => ("Copy all", "Копировать всё"),
     save, set_save => ("Save…", "Сохранить…"),
@@ -167,8 +213,55 @@ labels! {
         "Nothing logged yet. OpenVPN's output appears here while you connect.",
         "Записей пока нет. Вывод OpenVPN появится здесь при подключении."
     ),
+    log_filter_placeholder, set_log_filter_placeholder => ("Filter the log", "Фильтр по журналу"),
+    log_nothing_found, set_log_nothing_found => ("Nothing matches the filter.", "Ничего не найдено."),
+    diagnostics, set_diagnostics => ("Copy diagnostics", "Скопировать диагностику"),
 
     // Messages from the Rust side
+    import_scripts => (
+        "This profile runs programs as root: {}.",
+        "Этот профиль запускает программы от root: {}."
+    ),
+    import_pasted => ("Imported from the clipboard.", "Импортировано из буфера обмена."),
+    import_clipboard_empty => (
+        "The clipboard doesn't hold an OpenVPN profile.",
+        "В буфере нет профиля OpenVPN."
+    ),
+    import_url_failed => ("Couldn't download the profile: {}", "Не удалось скачать профиль: {}"),
+    import_url_not_profile => ("That link isn't an OpenVPN profile.", "По ссылке не профиль OpenVPN."),
+    import_url_needs_https => (
+        "Only https:// links are accepted: a profile fetched over http can be changed on the way.",
+        "Принимаются только ссылки https://: профиль, скачанный по http, можно подменить в пути."
+    ),
+    notify_connected => ("Connected to {}", "Подключено к {}"),
+    notify_disconnected => ("Disconnected", "Отключено"),
+    notify_failed => ("Connection failed: {}", "Подключение не удалось: {}"),
+    notify_tray => ("Ether keeps running in the tray.", "Ether продолжает работать в трее."),
+    reconnecting_attempt => (
+        "Reconnecting… (attempt {} of {})",
+        "Переподключение… (попытка {} из {})"
+    ),
+    reconnect_gave_up => (
+        "Couldn't reconnect. Check the log.",
+        "Не удалось переподключиться. Смотрите журнал."
+    ),
+    diagnostics_copied => (
+        "Diagnostics copied to the clipboard.",
+        "Диагностика скопирована в буфер."
+    ),
+    diagnostics_failed => (
+        "Couldn't copy the diagnostics to the clipboard.",
+        "Не удалось скопировать диагностику в буфер."
+    ),
+    downloading_profile => (
+        "Downloading the profile…",
+        "Загрузка профиля…"
+    ),
+    autostart_failed => (
+        "Couldn't change the autostart entry: {}",
+        "Не удалось изменить автозапуск: {}"
+    ),
+    tray_connect_last => ("Connect to {}", "Подключиться к {}"),
     theme_save_failed => (
         "Couldn't save the theme: {}",
         "Не удалось сохранить тему: {}"
@@ -199,7 +292,7 @@ labels! {
     disconnecting => ("Disconnecting…", "Отключение…"),
     checking_code => ("Checking the code…", "Проверка кода…"),
     signing_in => ("Signing in…", "Вход…"),
-    downloading => ("Downloading VPNdeck {}…", "Загрузка VPNdeck {}…"),
+    downloading => ("Downloading Ether {}…", "Загрузка Ether {}…"),
     keyring_save_failed => (
         "Couldn't save the password in your keyring: {}",
         "Не удалось сохранить пароль в связке ключей: {}"
@@ -209,8 +302,8 @@ labels! {
         "Не удалось удалить пароль из связки ключей: {}"
     ),
     update_available => (
-        "VPNdeck {} is available (you have {}).",
-        "Доступна версия VPNdeck {} (у вас {})."
+        "Ether {} is available (you have {}).",
+        "Доступна версия Ether {} (у вас {})."
     ),
     update_password_note => (
         " You'll be asked for your password.",
@@ -223,8 +316,8 @@ labels! {
     ),
     installing => ("Installing the update…", "Установка обновления…"),
     update_done => (
-        "The update is installed. Restart VPNdeck to start using it.",
-        "Обновление установлено. Перезапустите VPNdeck."
+        "The update is installed. Restart Ether to start using it.",
+        "Обновление установлено. Перезапустите Ether."
     ),
     update_done_busy => (
         " Restarting will disconnect the VPN.",
@@ -272,7 +365,7 @@ labels! {
     ),
 
     // Tray menu
-    tray_show => ("Show VPNdeck", "Открыть VPNdeck"),
+    tray_show => ("Show Ether", "Открыть Ether"),
     tray_connect => ("Connect", "Подключиться"),
     tray_update_to => ("Update to {}…", "Обновить до {}…"),
     tray_check_updates => (
@@ -294,7 +387,7 @@ pub fn import_summary(lang: Lang, imported: usize, skipped: &[String]) -> String
 /// Fills the `{}` placeholders of a template in order.
 ///
 /// `str::replace` would fill every placeholder with the same value, which breaks
-/// messages like "VPNdeck {} is available (you have {})".
+/// messages like "Ether {} is available (you have {})".
 pub fn fill(template: &str, values: &[&str]) -> String {
     let mut out = template.to_string();
     for value in values {
@@ -348,7 +441,7 @@ mod tests {
 
     #[test]
     fn fill_replaces_placeholders_in_order() {
-        assert_eq!(fill("VPNdeck {} is available (you have {}).", &["0.2.0", "0.1.4"]), "VPNdeck 0.2.0 is available (you have 0.1.4).");
+        assert_eq!(fill("Ether {} is available (you have {}).", &["0.2.0", "0.1.4"]), "Ether 0.2.0 is available (you have 0.1.4).");
         assert_eq!(fill("Could not start OpenVPN: {}", &["denied"]), "Could not start OpenVPN: denied");
         // Fewer values than placeholders leaves the rest alone instead of panicking.
         assert_eq!(fill("{} and {}", &["one"]), "one and {}");

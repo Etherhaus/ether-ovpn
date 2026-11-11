@@ -7,6 +7,31 @@ export struct ProfileInfo {
     index: int,
     name: string,
     saved-password: bool,
+    // host:port from the profile's remote line, shown before connecting.
+    remote: string,
+    // One or two letters for the row's avatar.
+    initials: string,
+}
+
+// One line of openvpn output. level: 0 ordinary, 1 warning, 2 error.
+export struct LogLine {
+    text: string,
+    level: int,
+}
+
+// One line of a profile, with the number shown next to it.
+export struct ProfileLine {
+    number: int,
+    text: string,
+    // A directive that makes openvpn run a program, which it does as root.
+    risky: bool,
+}
+
+// One result of the pre-connect check. state: 0 passed, 1 failed, 2 skipped.
+export struct CheckLine {
+    label: string,
+    detail: string,
+    state: int,
 }
 
 export enum UpdateState { idle, checking, available, downloading, installing, done, failed }
@@ -43,6 +68,36 @@ export global Labels {
     in property <string> forget-password;
     in property <string> remove;
     in property <string> search-placeholder;
+    in property <string> search-empty;
+
+    in property <string> add-title;
+    in property <string> add-files;
+    in property <string> add-paste;
+    in property <string> add-url;
+    in property <string> add-url-placeholder;
+    in property <string> add-hint;
+
+    in property <string> rename-title;
+    in property <string> rename;
+    in property <string> rename-empty;
+    in property <string> rename-taken;
+
+    in property <string> view;
+    in property <string> view-title;
+    in property <string> view-check;
+    in property <string> view-checking;
+    in property <string> view-copy;
+    in property <string> view-close;
+    in property <string> view-risky;
+    in property <string> check-file;
+    in property <string> check-remote;
+    in property <string> check-files;
+    in property <string> check-dns;
+    in property <string> check-port;
+    in property <string> check-remote-missing;
+    in property <string> check-udp-skipped;
+    in property <string> check-passed;
+    in property <string> check-failed;
 
     in property <string> empty-title;
     in property <string> empty-hint;
@@ -53,7 +108,13 @@ export global Labels {
     in property <string> theme;
     in property <string> dark;
     in property <string> light;
+    in property <string> system;
     in property <string> language;
+    in property <string> startup;
+    in property <string> autostart;
+    in property <string> auto-connect;
+    in property <string> notifications;
+    in property <string> notify-on;
     in property <string> close;
 
     in property <string> remove-body-saved;
@@ -64,6 +125,7 @@ export global Labels {
     in property <string> username;
     in property <string> password;
     in property <string> code;
+    in property <string> show-password;
     in property <string> remember-password;
     in property <string> change-password;
     in property <string> sign-in;
@@ -75,10 +137,13 @@ export global Labels {
     in property <string> save;
     in property <string> clear;
     in property <string> log-empty;
+    in property <string> log-filter-placeholder;
+    in property <string> log-nothing-found;
+    in property <string> diagnostics;
 }
 
-// TimeWeb Cloud design tokens. Every colour, radius and shadow in the app comes
-// from here, so the palette can be changed in one place.
+// Design tokens. Every colour, radius and shadow in the app comes from here, so
+// the palette can be changed in one place.
 export global Theme {
     // Slint takes a single family, not a CSS fallback list. Swap this line when
     // the Stem licence arrives; the system font covers the gap until then.
@@ -86,35 +151,73 @@ export global Theme {
 
     in-out property <bool> dark: true;
 
-    out property <color> accent: #454CEE;
-    out property <color> accent-hover: #1D20EE;
-    // Indigo wash for selected rows and banners.
-    out property <color> accent-soft: dark ? #242B47 : #E4E6FD;
+    // The brand: a violet that keeps white button text above 4.5:1 in both themes.
+    out property <color> accent: dark ? #7C5CFF : #6A45F5;
+    out property <color> accent-hover: dark ? #8F73FF : #5A35E8;
+    // The ends of a filled button, so it catches light like a lit surface.
+    out property <color> accent-top: dark ? #8B6BFF : #7A55FF;
+    out property <color> accent-bottom: dark ? #6B4BF0 : #5A35E8;
+    // A quiet wash for selected rows, chips and banners.
+    out property <color> accent-soft: dark ? #1A1633 : #EFEBFF;
+    // The halo around a focused field and behind the status card.
+    out property <color> accent-glow: dark ? #7C5CFF2E : #6A45F51A;
 
-    out property <color> bg: dark ? #050C26 : #F5F6FE;
-    out property <brush> window-bg: dark ? @linear-gradient(180deg, #181F38 0%, #050C26 100%) : #F5F6FE;
-    out property <color> surface: dark ? #181F38 : #FFFFFF;
-    out property <color> line: dark ? #242B47 : #E4E6FD;
-    out property <color> tint: dark ? #242B47 : #D8DBFA;
+    out property <color> bg: dark ? #06070C : #F6F7FB;
+    out property <color> surface: dark ? #0E1018 : #FFFFFF;
+    // One step above the surface: fields, hovered rows, segmented tracks.
+    out property <color> surface-2: dark ? #161A24 : #EEF0F6;
+    out property <color> line: dark ? #1F2432 : #E5E8F0;
+    out property <color> line-strong: dark ? #2C3242 : #D5DAE6;
 
-    out property <color> text: dark ? #FFFFFF : #050C26;
-    out property <color> text-muted: dark ? #969CAF : #646B85;
+    out property <color> text: dark ? #E9EDF6 : #0B0E15;
+    out property <color> text-muted: dark ? #7B859B : #667085;
 
-    out property <color> success: #1CC14D;
-    out property <color> error: #EA4335;
-    out property <color> warning: #FBBC05;
+    out property <color> success: dark ? #3DDC97 : #0E9F6E;
+    out property <color> error: dark ? #FF6B6B : #D92D20;
+    out property <color> warning: dark ? #FFB84D : #B54708;
 
-    // 0 12px 32px rgba(37,23,121,0.06): soft and violet, never black.
-    out property <color> shadow: #2517790F;
-    out property <length> shadow-blur: 32px;
+    // Glass: a card is a gradient with alpha over the page, not a flat fill.
+    // Slint has no backdrop blur, so the hairline border and the top highlight
+    // are what make the surface read as translucent.
+    out property <brush> glass: dark
+        ? @linear-gradient(180deg, #FFFFFF17 0%, #FFFFFF08 100%)
+        : @linear-gradient(180deg, #FFFFFF 0%, #FFFFFF 100%);
+    out property <color> glass-border: dark ? #FFFFFF1F : #E5E8F0;
+    out property <color> highlight: dark ? #FFFFFF2E : #FFFFFF00;
 
-    out property <length> radius-sm: 8px;
-    out property <length> radius-md: 12px;
-    out property <length> radius-lg: 16px;
-    out property <length> radius-xl: 24px;
-    out property <length> radius-2xl: 32px;
+    // Cards only lift off the page in the light theme; in the dark one the
+    // border does the separating.
+    out property <color> shadow: dark ? #00000000 : #0B0E151F;
+    out property <length> shadow-blur: 28px;
 
-    out property <duration> motion: 200ms;
+    out property <length> radius-sm: 10px;
+    out property <length> radius-md: 14px;
+    out property <length> radius-lg: 20px;
+    out property <length> radius-xl: 26px;
+
+    out property <duration> motion: 220ms;
+}
+
+// A translucent card: gradient fill, hairline border, and a light line along the
+// top edge. The highlight is inset past the corner radius so it never pokes out.
+component GlassCard inherits Rectangle {
+    in property <length> radius: Theme.radius-lg;
+
+    background: Theme.glass;
+    border-radius: root.radius;
+    border-width: 1px;
+    border-color: Theme.glass-border;
+    drop-shadow-color: Theme.shadow;
+    drop-shadow-blur: Theme.shadow-blur;
+    drop-shadow-offset-y: 10px;
+
+    Rectangle {
+        x: root.radius;
+        y: 0;
+        width: parent.width - root.radius * 2;
+        height: 1px;
+        background: @linear-gradient(90deg, transparent 0%, Theme.highlight 30%, Theme.highlight 70%, transparent 100%);
+    }
 }
 
 // Lets Tab reach a clickable element and Enter or Space activate it.
@@ -134,7 +237,7 @@ component ActivationScope inherits FocusScope {
 // A dimmed overlay with a centered card. Escape cancels it.
 component Modal inherits Rectangle {
     callback cancel();
-    background: #050C2699;
+    background: #000000B8;
     TouchArea { }
 
     FocusScope {
@@ -149,15 +252,23 @@ component Modal inherits Rectangle {
         }
 
         Rectangle {
-            width: min(400px, root.width - 32px);
+            width: min(420px, root.width - 32px);
             height: card.preferred-height;
-            background: Theme.surface;
+            background: Theme.glass;
             border-radius: Theme.radius-xl;
             border-width: 1px;
-            border-color: Theme.line;
-            drop-shadow-color: Theme.shadow;
-            drop-shadow-blur: Theme.shadow-blur;
-            drop-shadow-offset-y: 12px;
+            border-color: Theme.glass-border;
+            drop-shadow-color: #00000066;
+            drop-shadow-blur: 40px;
+            drop-shadow-offset-y: 18px;
+
+            Rectangle {
+                x: Theme.radius-xl;
+                y: 0;
+                width: parent.width - Theme.radius-xl * 2;
+                height: 1px;
+                background: @linear-gradient(90deg, transparent 0%, Theme.highlight 30%, Theme.highlight 70%, transparent 100%);
+            }
 
             card := VerticalLayout {
                 padding: 24px;
@@ -168,21 +279,21 @@ component Modal inherits Rectangle {
     }
 }
 
-component BigButton inherits Rectangle {
+component Button inherits Rectangle {
     in property <string> text;
     in property <bool> enabled: true;
     in property <bool> primary: true;
-    in property <length> font-size: 16px;
+    in property <length> font-size: 14px;
     callback clicked();
 
-    min-height: 48px;
+    min-height: 46px;
     border-radius: Theme.radius-md;
-    opacity: root.enabled ? 1 : 0.45;
+    opacity: root.enabled ? 1 : 0.4;
     background: root.primary
-        ? (area.has-hover && root.enabled ? Theme.accent-hover : Theme.accent)
-        : (area.has-hover && root.enabled ? Theme.tint : Theme.surface);
+        ? @linear-gradient(180deg, Theme.accent-top 0%, Theme.accent-bottom 100%)
+        : transparent;
     border-width: focus.has-focus ? 2px : root.primary ? 0 : 1px;
-    border-color: focus.has-focus ? Theme.accent : Theme.line;
+    border-color: focus.has-focus ? Theme.accent : Theme.line-strong;
     forward-focus: focus;
     accessible-role: button;
     accessible-label: root.text;
@@ -190,7 +301,16 @@ component BigButton inherits Rectangle {
         root.clicked();
     }
 
-    animate background { duration: Theme.motion; easing: ease-in-out; }
+    // The hover light sits under the label, so the fill itself never animates.
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        border-radius: root.border-radius;
+        background: #FFFFFF;
+        opacity: area.has-hover && root.enabled ? (root.primary ? 0.10 : 0.04) : 0;
+
+        animate opacity { duration: Theme.motion; easing: ease-out; }
+    }
 
     Text {
         text: root.text;
@@ -199,6 +319,54 @@ component BigButton inherits Rectangle {
         color: root.primary ? #FFFFFF : Theme.text;
         horizontal-alignment: center;
         vertical-alignment: center;
+    }
+
+    focus := ActivationScope {
+        enabled: root.enabled;
+        activated => {
+            root.clicked();
+        }
+    }
+
+    area := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// A quiet header action: no border until the pointer is over it.
+component GhostButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    min-height: 32px;
+    border-radius: Theme.radius-sm;
+    background: area.has-hover && root.enabled ? Theme.surface-2 : transparent;
+    forward-focus: focus;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    animate background { duration: Theme.motion; easing: ease-out; }
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        alignment: center;
+        Text {
+            text: root.text;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+            color: area.has-hover && root.enabled ? Theme.text : Theme.text-muted;
+            vertical-alignment: center;
+        }
     }
 
     focus := ActivationScope {
@@ -260,17 +428,24 @@ component Link inherits Text {
 component Field inherits Rectangle {
     in property <string> placeholder;
     in property <bool> password: false;
+    // Shows a password field's contents in plain text.
+    in property <bool> reveal: false;
     in-out property <string> text;
     callback accepted();
 
-    height: 44px;
+    height: 46px;
     border-radius: Theme.radius-md;
-    background: Theme.dark ? Theme.bg : Theme.surface;
+    background: Theme.surface-2;
     border-width: input.has-focus ? 2px : 1px;
-    border-color: input.has-focus ? Theme.accent : Theme.line;
+    border-color: input.has-focus ? Theme.accent : Theme.line-strong;
+    // The halo is a shadow rather than a second rectangle, so it can sit behind
+    // the field without being clipped by it.
+    drop-shadow-color: input.has-focus ? Theme.accent-glow : transparent;
+    drop-shadow-blur: 16px;
     forward-focus: input;
 
-    animate border-color { duration: Theme.motion; easing: ease-in-out; }
+    animate border-color { duration: Theme.motion; easing: ease-out; }
+    animate drop-shadow-color { duration: Theme.motion; easing: ease-out; }
 
     public function focus-input() {
         input.focus();
@@ -289,9 +464,11 @@ component Field inherits Rectangle {
         height: parent.height;
         vertical-alignment: center;
         single-line: true;
-        font-size: 15px;
+        font-size: 14px;
         color: Theme.text;
-        input-type: root.password ? InputType.password : InputType.text;
+        input-type: root.password && !root.reveal ? InputType.password : InputType.text;
+        // The placeholder is a separate Text, so the field needs its own label.
+        accessible-label: root.placeholder;
         text <=> root.text;
         accepted => {
             root.accepted();
@@ -303,75 +480,276 @@ component Field inherits Rectangle {
         width: parent.width - 24px;
         height: parent.height;
         vertical-alignment: center;
-        font-size: 15px;
+        font-size: 14px;
         color: Theme.text-muted;
         text: root.placeholder;
     }
 }
 
-component Check inherits HorizontalLayout {
+// A checkbox. It inherits Rectangle rather than a layout: a TouchArea inside a
+// layout gets no size of its own and would never see a click.
+component Check inherits Rectangle {
     in property <string> text;
     in-out property <bool> checked;
-    spacing: 8px;
+
     height: 24px;
-    alignment: start;
+    background: transparent;
+    accessible-role: checkbox;
+    accessible-label: root.text;
+    accessible-checked: root.checked;
+    accessible-action-default => {
+        root.checked = !root.checked;
+    }
 
-    Rectangle {
-        width: 18px;
-        height: 18px;
-        border-radius: 4px;
-        border-width: 1px;
-        border-color: root.checked ? Theme.accent : Theme.line;
-        background: root.checked ? Theme.accent : transparent;
+    HorizontalLayout {
+        spacing: 8px;
+        alignment: start;
 
-        animate background { duration: Theme.motion; easing: ease-in-out; }
+        Rectangle {
+            width: 18px;
+            height: 18px;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: root.checked ? Theme.accent : Theme.line-strong;
+            background: root.checked ? Theme.accent : transparent;
 
-        if root.checked: Path {
-            x: 4px;
-            y: 5px;
-            width: 10px;
-            height: 8px;
-            commands: "M 0 4 L 3.5 7.5 L 10 0";
-            stroke: #FFFFFF;
-            stroke-width: 2px;
-            fill: transparent;
+            animate background { duration: Theme.motion; easing: ease-out; }
+
+            if root.checked: Path {
+                x: 4px;
+                y: 5px;
+                width: 10px;
+                height: 8px;
+                commands: "M 0 4 L 3.5 7.5 L 10 0";
+                stroke: #FFFFFF;
+                stroke-width: 2px;
+                fill: transparent;
+            }
+        }
+
+        Text {
+            text: root.text;
+            font-size: 13px;
+            color: Theme.text;
+            vertical-alignment: center;
         }
     }
 
-    Text {
-        text: root.text;
-        font-size: 14px;
-        color: Theme.text;
-        vertical-alignment: center;
-    }
-
     TouchArea {
+        mouse-cursor: pointer;
         clicked => {
             root.checked = !root.checked;
         }
     }
 }
 
-component Stat inherits VerticalLayout {    in property <string> label;
-    in property <string> value;
-    spacing: 2px;
+// An on/off switch for the settings dialog.
+component Toggle inherits Rectangle {
+    in-out property <bool> checked: false;
+    in property <string> label;
+    callback toggled(bool);
+
+    width: 44px;
+    height: 26px;
+    border-radius: 13px;
+    background: root.checked ? Theme.accent : Theme.surface-2;
+    border-width: root.checked ? 0 : 1px;
+    border-color: Theme.line-strong;
+    accessible-role: switch;
+    accessible-label: root.label;
+    accessible-checked: root.checked;
+    accessible-action-default => {
+        root.checked = !root.checked;
+        root.toggled(root.checked);
+    }
+
+    animate background { duration: Theme.motion; easing: ease-out; }
+
+    Rectangle {
+        width: 20px;
+        height: 20px;
+        border-radius: 10px;
+        y: 3px;
+        x: root.checked ? root.width - self.width - 3px : 3px;
+        background: root.checked ? #FFFFFF : Theme.text-muted;
+
+        animate x { duration: Theme.motion; easing: ease-out; }
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.checked = !root.checked;
+            root.toggled(root.checked);
+        }
+    }
+}
+
+// A label on the left and a control on the right.
+component SettingRow inherits HorizontalLayout {
+    in property <string> label;
+    spacing: 12px;
+    height: 40px;
     Text {
         text: root.label;
-        font-size: 12px;
+        font-size: 13px;
+        color: Theme.text;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+    }
+
+    @children
+}
+
+component Stat inherits VerticalLayout {
+    in property <string> label;
+    in property <string> value;
+    spacing: 3px;
+    Text {
+        text: root.label;
+        font-size: 11px;
         color: Theme.text-muted;
     }
 
     Text {
         text: root.value;
-        font-size: 16px;
+        font-size: 15px;
         font-weight: 600;
         color: Theme.text;
         overflow: elide;
     }
 }
 
+// One part of a segmented switch.
+component Segment inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    callback clicked();
+
+    border-radius: Theme.radius-sm;
+    background: root.active ? Theme.glass : transparent;
+    border-width: root.active ? 1px : 0;
+    border-color: root.active ? Theme.glass-border : transparent;
+    accessible-role: radio-button;
+    accessible-label: root.text;
+    accessible-checked: root.active;
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    animate background { duration: Theme.motion; easing: ease-out; }
+
+    Text {
+        text: root.text;
+        font-size: 13px;
+        font-weight: root.active ? 600 : 500;
+        color: root.active ? Theme.text : Theme.text-muted;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// Two or three choices. A third segment only appears when `third` is set.
+component Segmented inherits Rectangle {
+    in property <string> first;
+    in property <string> second;
+    in property <string> third: "";
+    in property <int> current: 0;
+    callback picked(int);
+
+    height: 40px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-2;
+    border-width: 1px;
+    border-color: Theme.line;
+    HorizontalLayout {
+        padding: 4px;
+        spacing: 4px;
+        Segment {
+            horizontal-stretch: 1;
+            text: root.first;
+            active: root.current == 0;
+            clicked => {
+                root.picked(0);
+            }
+        }
+
+        Segment {
+            horizontal-stretch: 1;
+            text: root.second;
+            active: root.current == 1;
+            clicked => {
+                root.picked(1);
+            }
+        }
+
+        if root.third != "": Segment {
+            horizontal-stretch: 1;
+            text: root.third;
+            active: root.current == 2;
+            clicked => {
+                root.picked(2);
+            }
+        }
+    }
+}
+
+// The profile's initials in a rounded square, so rows are easy to tell apart.
+component Avatar inherits Rectangle {
+    in property <string> initials;
+    in property <bool> active: false;
+
+    width: 36px;
+    height: 36px;
+    border-radius: 12px;
+    background: root.active
+        ? @linear-gradient(180deg, Theme.accent-top 0%, Theme.accent-bottom 100%)
+        : Theme.surface-2;
+    border-width: root.active ? 0 : 1px;
+    border-color: Theme.line;
+
+    animate background { duration: Theme.motion; easing: ease-out; }
+
+    Text {
+        text: root.initials;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.3px;
+        color: root.active ? #FFFFFF : Theme.text-muted;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// Download speed over the last few samples, as bars scaled to the peak.
+component Sparkline inherits Rectangle {
+    in property <[float]> samples;
+
+    height: 30px;
+    background: transparent;
+    property <length> step: root.samples.length > 0 ? root.width / root.samples.length : 0px;
+
+    for sample[i] in root.samples: Rectangle {
+        x: i * root.step;
+        width: max(1px, root.step - 2px);
+        y: root.height - self.height;
+        height: max(2px, sample * root.height);
+        border-radius: 2px;
+        background: @linear-gradient(180deg, Theme.accent 0%, Theme.accent.transparentize(0.62) 100%);
+    }
+}
+
 component ProfileRow inherits Rectangle {
     in property <string> name;
+    in property <string> remote;
+    in property <string> initials;
     in property <bool> selected;
     in property <bool> connected;
     in property <bool> can-remove;
@@ -379,14 +757,21 @@ component ProfileRow inherits Rectangle {
     callback clicked();
     callback remove();
     callback forget-password();
+    callback rename();
+    callback view();
 
-    height: 56px;
+    min-height: 58px;
     border-radius: Theme.radius-md;
-    background: root.selected ? Theme.accent-soft : row-area.has-hover ? Theme.tint : transparent;
+    background: root.selected ? Theme.accent-soft : row-area.has-hover ? Theme.surface-2 : transparent;
     border-width: root.selected ? 1px : 0;
-    border-color: Theme.accent;
+    border-color: Theme.accent.transparentize(0.72);
+    accessible-role: button;
+    accessible-label: root.name;
+    accessible-action-default => {
+        root.clicked();
+    }
 
-    animate background { duration: Theme.motion; easing: ease-in-out; }
+    animate background { duration: Theme.motion; easing: ease-out; }
 
     row-area := TouchArea {
         mouse-cursor: pointer;
@@ -396,42 +781,69 @@ component ProfileRow inherits Rectangle {
     }
 
     HorizontalLayout {
-        padding-left: 14px;
+        padding-left: 12px;
         padding-right: 14px;
-        spacing: 10px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 12px;
+        cross-axis-alignment: center;
+
+        Avatar {
+            initials: root.initials;
+            active: root.selected;
+        }
+
         VerticalLayout {
             alignment: center;
             horizontal-stretch: 1;
+            spacing: 2px;
             Text {
                 text: root.name;
-                font-size: 15px;
-                font-weight: root.selected ? 600 : 400;
+                font-size: 14px;
+                font-weight: root.selected ? 600 : 500;
                 color: Theme.text;
                 overflow: elide;
             }
 
-            // The actions sit on this line so they don't squeeze long names.
-            if root.saved-password || (root.selected && root.can-remove): HorizontalLayout {
+            if root.remote != "": Text {
+                text: root.remote;
+                font-size: 11px;
+                color: Theme.text-muted;
+                overflow: elide;
+            }
+
+            // The actions sit on their own line so they don't squeeze long names.
+            if root.selected: HorizontalLayout {
                 spacing: 14px;
-                Text {
-                    text: root.saved-password ? Labels.password-saved : "";
-                    font-size: 12px;
-                    color: Theme.text-muted;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
+                padding-top: 2px;
+                alignment: start;
+                Link {
+                    text: Labels.view;
+                    font-size: 11px;
+                    clicked => {
+                        root.view();
+                    }
                 }
 
-                if root.selected && root.saved-password: Link {
+                Link {
+                    text: Labels.rename;
+                    font-size: 11px;
+                    clicked => {
+                        root.rename();
+                    }
+                }
+
+                if root.saved-password: Link {
                     text: Labels.forget-password;
-                    font-size: 12px;
+                    font-size: 11px;
                     clicked => {
                         root.forget-password();
                     }
                 }
 
-                if root.selected && root.can-remove: Link {
+                if root.can-remove: Link {
                     text: Labels.remove;
-                    font-size: 12px;
+                    font-size: 11px;
                     clicked => {
                         root.remove();
                     }
@@ -440,24 +852,33 @@ component ProfileRow inherits Rectangle {
         }
 
         if root.connected: Rectangle {
-            width: 8px;
-            height: 8px;
-            border-radius: 4px;
-            background: Theme.success;
+            width: 18px;
+            height: 18px;
+            border-radius: 9px;
+            background: Theme.success.transparentize(0.82);
+
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                background: Theme.success;
+            }
         }
     }
 }
 
 export component AppWindow inherits Window {
-    title: "VPNdeck";
-    icon: @image-url("../assets/vpndeck-256.png");
+    title: "Ether";
+    icon: @image-url("../assets/ether-256.png");
     preferred-width: 440px;
-    preferred-height: 720px;
+    preferred-height: 740px;
     min-width: 360px;
     min-height: 560px;
-    default-font-size: 15px;
+    default-font-size: 14px;
     default-font-family: Theme.font-family;
-    background: Theme.window-bg;
+    background: Theme.bg;
 
     in property <[ProfileInfo]> profiles;
     // How many profiles exist, which is not the same as the filtered list above.
@@ -474,9 +895,11 @@ export component AppWindow inherits Window {
     in property <string> rx: "—";
     in property <string> tx: "—";
     in property <string> duration: "—";
-    in property <string> notice;
-    // Whether the notice reports a failure, which colours the banner.
-    in property <bool> notice-error: false;
+    // Download speed samples, oldest first, scaled to 0..1.
+    in property <[float]> samples;
+    // A short message shown over the window, empty when there is none.
+    in property <string> toast;
+    in property <bool> toast-error: false;
     in-out property <string> search-query;
     // "en" or "ru", so the language picker knows which button is active.
     in property <string> lang;
@@ -495,6 +918,7 @@ export component AppWindow inherits Window {
     in-out property <string> auth-password;
     in-out property <string> auth-code;
     in-out property <bool> auth-remember;
+    in-out property <bool> auth-reveal: false;
     // Index of the profile whose removal is waiting for confirmation, or -1.
     in-out property <int> confirm-remove: -1;
     // The name and keyring state of that profile, so the dialog doesn't have to
@@ -502,6 +926,21 @@ export component AppWindow inherits Window {
     in property <string> confirm-title;
     in property <bool> confirm-saved-password;
     in-out property <bool> settings-visible: false;
+
+    // Add-profile dialog: files, clipboard or a link.
+    in-out property <bool> add-visible: false;
+    in-out property <string> add-url;
+    // Rename dialog.
+    in-out property <bool> rename-visible: false;
+    in-out property <int> rename-index: -1;
+    in-out property <string> rename-name;
+    in property <string> rename-error;
+
+    // "dark", "light" or "system".
+    in property <string> theme-mode: "dark";
+    in-out property <bool> autostart: false;
+    in-out property <bool> auto-connect: false;
+    in-out property <bool> notifications: true;
 
     in property <string> version;
     in property <UpdateState> update-state: UpdateState.idle;
@@ -518,18 +957,28 @@ export component AppWindow inherits Window {
     callback dismiss-update();
 
     callback import-profile();
+    callback import-clipboard();
+    callback import-url(string);
+    callback files-dropped(data-transfer);
     callback remove-profile(int);
     callback forget-password(int);
     callback select-profile(int);
+    callback move-selection(int);
     callback request-remove(int);
+    callback request-rename(int);
+    callback rename-profile(int, string);
+    callback view-profile(int);
     callback connect(int);
     callback disconnect();
     callback submit-auth(string, string, string);
     callback cancel-auth();
     callback change-password();
     callback show-log();
-    callback set-theme(bool);
+    callback set-theme(string);
     callback set-language(string);
+    callback set-autostart(bool);
+    callback set-auto-connect(bool);
+    callback set-notifications(bool);
     callback search-changed(string);
 
     property <bool> has-selection: root.selected >= 0 && root.selected < root.profile-count;
@@ -541,382 +990,575 @@ export component AppWindow inherits Window {
     // The name of the profile the card describes, filled in from Rust because the
     // list above is filtered and its indices don't match the store.
     in property <string> card-name;
+    in property <string> card-remote;
     property <color> state-color: root.shown-state == ConnState.connected ? Theme.success
         : root.shown-state == ConnState.error ? Theme.error
         : root.shown-state == ConnState.idle ? Theme.text-muted
         : Theme.warning;
+    property <string> state-label: root.shown-state == ConnState.connected ? Labels.state-connected
+        : root.shown-state == ConnState.connecting ? Labels.state-connecting
+        : root.shown-state == ConnState.disconnecting ? Labels.state-disconnecting
+        : root.shown-state == ConnState.error ? Labels.state-error
+        : Labels.state-idle;
+    // Drives the pulsing dot while a connection is being set up.
+    property <bool> pulse-on: true;
+    property <bool> show-search: root.profile-count > 2;
 
     changed search-query => {
         root.search-changed(root.search-query);
     }
 
-    VerticalLayout {
-        padding: 20px;
-        spacing: 16px;
+    changed add-visible => {
+        if root.add-visible {
+            root.add-url = "";
+        }
+    }
 
-        HorizontalLayout {
-            spacing: 10px;
-            Image {
-                source: @image-url("../assets/shield.svg");
-                colorize: Theme.accent;
-                width: 28px;
-                height: 28px;
-            }
+    // The dot breathes while connecting, so the app looks alive during the wait.
+    pulse := Timer {
+        interval: 700ms;
+        running: root.shown-state == ConnState.connecting;
+        triggered => {
+            root.pulse-on = !root.pulse-on;
+        }
+    }
 
-            Text {
-                text: "VPNdeck";
-                font-size: 20px;
-                font-weight: 700;
-                color: Theme.text;
-                vertical-alignment: center;
-                horizontal-stretch: 1;
-            }
+    // One soft glow at the top of the page. Slint's radial gradient is centred,
+    // so this rectangle is what places it.
+    Rectangle {
+        width: parent.width;
+        height: 380px;
+        background: @radial-gradient(circle, Theme.accent-glow 0%, transparent 70%);
+    }
 
-            Link {
-                text: Labels.log;
-                font-size: 14px;
-                vertical-alignment: center;
-                clicked => {
-                    root.show-log();
-                }
-            }
-
-            Link {
-                text: Labels.settings;
-                font-size: 14px;
-                vertical-alignment: center;
-                clicked => {
-                    root.settings-visible = true;
-                }
-            }
+    // Keyboard: Ctrl+F search, Ctrl+L log, arrows move, Enter connects.
+    keys := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        init => {
+            self.focus();
         }
 
-        if root.update-state != UpdateState.idle && root.update-state != UpdateState.checking: Rectangle {
-            border-radius: Theme.radius-lg;
-            background: root.update-state == UpdateState.failed ? Theme.error.transparentize(0.88) : Theme.accent-soft;
-            min-height: banner.preferred-height;
-            banner := VerticalLayout {
-                padding: 16px;
+        key-pressed(event) => {
+            if event.modifiers.control && (event.text == "f" || event.text == "F") {
+                if root.show-search {
+                    search.focus-input();
+                }
+                return accept;
+            }
+            if event.modifiers.control && (event.text == "l" || event.text == "L") {
+                root.show-log();
+                return accept;
+            }
+            if event.text == Key.DownArrow {
+                root.move-selection(1);
+                return accept;
+            }
+            if event.text == Key.UpArrow {
+                root.move-selection(-1);
+                return accept;
+            }
+            if event.text == Key.Return {
+                if root.busy {
+                    root.disconnect();
+                } else if root.has-selection {
+                    root.connect(root.selected);
+                }
+                return accept;
+            }
+            if event.text == Key.Escape && root.search-query != "" {
+                root.search-query = "";
+                return accept;
+            }
+            reject
+        }
+
+        VerticalLayout {
+            padding: 20px;
+            spacing: 14px;
+
+            // Header
+            HorizontalLayout {
                 spacing: 10px;
-                Text {
-                    wrap: word-wrap;
-                    color: Theme.text;
-                    text: root.update-text;
-                }
+                cross-axis-alignment: center;
 
-                if root.update-state == UpdateState.downloading: Rectangle {
-                    height: 6px;
-                    border-radius: 3px;
-                    background: Theme.line;
-                    Rectangle {
-                        width: parent.width * root.update-progress;
-                        height: parent.height;
-                        border-radius: 3px;
-                        background: Theme.accent;
+                Rectangle {
+                    width: 32px;
+                    height: 32px;
+                    border-radius: 10px;
+                    background: @linear-gradient(180deg, Theme.accent-top 0%, Theme.accent-bottom 100%);
+                    drop-shadow-color: Theme.accent-glow;
+                    drop-shadow-blur: 16px;
+
+                    Image {
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        source: @image-url("../assets/mark.svg");
+                        colorize: #FFFFFF;
+                        width: 18px;
+                        height: 18px;
                     }
                 }
 
+                // The wordmark: the initial carries the weight, the extension
+                // stays quiet. Two Texts, because one can't mix weights.
                 HorizontalLayout {
-                    alignment: end;
-                    spacing: 16px;
-                    if root.update-state == UpdateState.available: Link {
-                        text: Labels.whats-new;
-                        font-size: 14px;
-                        vertical-alignment: center;
-                        clicked => {
-                            root.open-release-notes();
-                        }
+                    spacing: 0px;
+                    alignment: start;
+                    cross-axis-alignment: center;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: "E";
+                        font-size: 15px;
+                        font-weight: 800;
+                        letter-spacing: 0.3px;
+                        color: Theme.text;
+                        horizontal-stretch: 0;
                     }
 
-                    if root.update-state == UpdateState.available: BigButton {
-                        text: Labels.update-now;
-                        font-size: 14px;
-                        min-height: 40px;
-                        width: 130px;
-                        clicked => {
-                            root.install-update();
-                        }
-                    }
-
-                    if root.update-state == UpdateState.done: BigButton {
-                        text: Labels.restart-app;
-                        font-size: 14px;
-                        min-height: 40px;
-                        width: 170px;
-                        clicked => {
-                            root.restart-app();
-                        }
-                    }
-
-                    if root.update-state == UpdateState.failed: Link {
-                        text: Labels.dismiss;
-                        font-size: 14px;
-                        clicked => {
-                            root.dismiss-update();
-                        }
-                    }
-                }
-            }
-        }
-
-        // First run: nothing to connect to yet, so the import is the only action.
-        if root.profile-count == 0: Rectangle {
-            border-radius: Theme.radius-lg;
-            background: Theme.surface;
-            border-width: 1px;
-            border-color: Theme.line;
-            drop-shadow-color: Theme.shadow;
-            drop-shadow-blur: Theme.shadow-blur;
-            drop-shadow-offset-y: 12px;
-            min-height: empty-card.preferred-height;
-            empty-card := VerticalLayout {
-                padding: 28px;
-                spacing: 14px;
-
-                HorizontalLayout {
-                    alignment: center;
-                    Rectangle {
-                        width: 64px;
-                        height: 64px;
-                        border-radius: Theme.radius-lg;
-                        background: Theme.accent-soft;
-                        Image {
-                            x: (parent.width - self.width) / 2;
-                            y: (parent.height - self.height) / 2;
-                            source: @image-url("../assets/shield.svg");
-                            colorize: Theme.accent;
-                            width: 32px;
-                            height: 32px;
-                        }
+                    Text {
+                        text: ".OVPN";
+                        font-size: 15px;
+                        font-weight: 600;
+                        letter-spacing: 0.3px;
+                        color: Theme.text-muted;
+                        horizontal-stretch: 0;
                     }
                 }
 
-                Text {
-                    text: Labels.empty-title;
-                    font-size: 18px;
-                    font-weight: 700;
-                    color: Theme.text;
-                    horizontal-alignment: center;
-                }
-
-                Text {
-                    text: Labels.empty-hint;
-                    font-size: 14px;
-                    wrap: word-wrap;
-                    color: Theme.text-muted;
-                    horizontal-alignment: center;
-                }
-
-                BigButton {
-                    text: Labels.import-profiles;
-                    font-size: 15px;
-                    min-height: 44px;
+                GhostButton {
+                    text: Labels.log;
                     clicked => {
-                        root.import-profile();
+                        root.show-log();
+                    }
+                }
+
+                GhostButton {
+                    text: Labels.settings;
+                    clicked => {
+                        root.settings-visible = true;
                     }
                 }
             }
-        }
 
-        // Status card
-        if root.profile-count > 0: Rectangle {
-            border-radius: Theme.radius-lg;
-            background: Theme.surface;
-            border-width: 1px;
-            border-color: Theme.line;
-            drop-shadow-color: Theme.shadow;
-            drop-shadow-blur: Theme.shadow-blur;
-            drop-shadow-offset-y: 12px;
-            min-height: card.preferred-height;
-            card := VerticalLayout {
-                padding: 20px;
-                spacing: 18px;
-                HorizontalLayout {
-                    spacing: 14px;
-                    Rectangle {
-                        width: 52px;
-                        height: 52px;
-                        border-radius: Theme.radius-md;
-                        background: root.state-color.transparentize(0.88);
-                        Image {
-                            x: (parent.width - self.width) / 2;
-                            y: (parent.height - self.height) / 2;
-                            source: @image-url("../assets/shield.svg");
-                            colorize: root.state-color;
-                            width: 28px;
-                            height: 28px;
+            if root.update-state != UpdateState.idle && root.update-state != UpdateState.checking: Rectangle {
+                border-radius: Theme.radius-lg;
+                background: root.update-state == UpdateState.failed ? Theme.error.transparentize(0.9) : Theme.accent-soft;
+                min-height: banner.preferred-height;
+                banner := VerticalLayout {
+                    padding: 14px;
+                    spacing: 10px;
+                    Text {
+                        wrap: word-wrap;
+                        font-size: 13px;
+                        color: Theme.text;
+                        text: root.update-text;
+                    }
+
+                    if root.update-state == UpdateState.downloading: Rectangle {
+                        height: 4px;
+                        border-radius: 2px;
+                        background: Theme.line;
+                        Rectangle {
+                            width: parent.width * root.update-progress;
+                            height: parent.height;
+                            border-radius: 2px;
+                            background: Theme.accent;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        alignment: end;
+                        spacing: 14px;
+                        if root.update-state == UpdateState.available: Link {
+                            text: Labels.whats-new;
+                            font-size: 13px;
+                            vertical-alignment: center;
+                            clicked => {
+                                root.open-release-notes();
+                            }
+                        }
+
+                        if root.update-state == UpdateState.available: Button {
+                            text: Labels.update-now;
+                            font-size: 13px;
+                            min-height: 36px;
+                            width: 124px;
+                            clicked => {
+                                root.install-update();
+                            }
+                        }
+
+                        if root.update-state == UpdateState.done: Button {
+                            text: Labels.restart-app;
+                            font-size: 13px;
+                            min-height: 36px;
+                            width: 168px;
+                            clicked => {
+                                root.restart-app();
+                            }
+                        }
+
+                        if root.update-state == UpdateState.failed: Link {
+                            text: Labels.dismiss;
+                            font-size: 13px;
+                            clicked => {
+                                root.dismiss-update();
+                            }
+                        }
+                    }
+                }
+            }
+
+            // First run: nothing to connect to yet, so the import is the only action.
+            // The card keeps its natural height and sits in the middle of the
+            // space the profile list would have used.
+            if root.profile-count == 0: VerticalLayout {
+                alignment: center;
+                vertical-stretch: 1;
+                GlassCard {
+                    vertical-stretch: 0;
+                    empty-card := VerticalLayout {
+                        padding: 32px;
+                        spacing: 16px;
+
+                        HorizontalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 64px;
+                                height: 64px;
+                                border-radius: 20px;
+                                background: @linear-gradient(180deg, Theme.accent-top 0%, Theme.accent-bottom 100%);
+                                drop-shadow-color: Theme.accent-glow;
+                                drop-shadow-blur: 28px;
+
+                                Image {
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    source: @image-url("../assets/mark.svg");
+                                    colorize: #FFFFFF;
+                                    width: 30px;
+                                    height: 30px;
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: Labels.empty-title;
+                            font-size: 17px;
+                            font-weight: 700;
+                            color: Theme.text;
+                            horizontal-alignment: center;
+                        }
+
+                        Text {
+                            text: Labels.empty-hint;
+                            font-size: 13px;
+                            wrap: word-wrap;
+                            color: Theme.text-muted;
+                            horizontal-alignment: center;
+                        }
+
+                        Button {
+                            text: Labels.import-profiles;
+                            font-size: 14px;
+                            min-height: 44px;
+                            clicked => {
+                                root.add-visible = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Status card
+            if root.profile-count > 0: GlassCard {
+                // Natural height: the profile list below is what should scroll.
+                vertical-stretch: 0;
+                min-height: card.preferred-height;
+                // The edge takes the colour of the state, so the card reads at a
+                // glance without a second badge.
+                border-color: root.shown-state == ConnState.idle
+                    ? Theme.glass-border
+                    : root.state-color.transparentize(0.76);
+                card := VerticalLayout {
+                    padding: 20px;
+                    spacing: 16px;
+
+                    HorizontalLayout {
+                        spacing: 10px;
+                        cross-axis-alignment: center;
+                        Rectangle {
+                            width: 20px;
+                            height: 20px;
+                            border-radius: 10px;
+                            background: root.state-color.transparentize(0.84);
+                            opacity: root.shown-state == ConnState.connecting ? (root.pulse-on ? 1 : 0.35) : 1;
+
+                            animate opacity { duration: 600ms; easing: ease-in-out; }
+
+                            Rectangle {
+                                width: 8px;
+                                height: 8px;
+                                border-radius: 4px;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                background: root.state-color;
+                            }
+                        }
+
+                        Text {
+                            text: root.state-label;
+                            font-size: 11px;
+                            font-weight: 700;
+                            letter-spacing: 0.9px;
+                            color: root.state-color;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+
+                        Text {
+                            text: root.duration;
+                            font-size: 12px;
+                            color: Theme.text-muted;
+                            vertical-alignment: center;
                         }
                     }
 
                     VerticalLayout {
-                        alignment: center;
-                        spacing: 2px;
+                        spacing: 4px;
                         Text {
-                            font-size: 22px;
+                            font-size: 26px;
                             font-weight: 700;
-                            color: root.shown-state == ConnState.idle ? Theme.text : root.state-color;
-                            text: root.shown-state == ConnState.connected ? Labels.state-connected
-                                : root.shown-state == ConnState.connecting ? Labels.state-connecting
-                                : root.shown-state == ConnState.disconnecting ? Labels.state-disconnecting
-                                : root.shown-state == ConnState.error ? Labels.state-error
-                                : Labels.state-idle;
+                            letter-spacing: -0.3px;
+                            color: Theme.text;
+                            overflow: elide;
+                            text: root.card-name != "" ? root.card-name : Labels.choose-profile;
                         }
 
-                        Text {
-                            font-size: 14px;
+                        if root.shown-state != ConnState.connected && root.shown-state != ConnState.idle: Text {
+                            font-size: 12px;
                             wrap: word-wrap;
                             color: Theme.text-muted;
-                            text: root.shown-state == ConnState.connected ? root.card-name + "  ·  " + root.duration
-                                : root.shown-state == ConnState.idle ? (root.card-name != "" ? root.card-name : Labels.choose-profile)
-                                : root.status-text;
-                        }
-                    }
-                }
-
-                if root.shown-state == ConnState.connected: GridLayout {
-                    spacing: 12px;
-                    Row {
-                        Stat {
-                            label: Labels.vpn-address;
-                            value: root.local-ip;
+                            text: root.status-text;
                         }
 
-                        Stat {
-                            label: Labels.server;
-                            value: root.remote;
+                        // The server is worth knowing before the tunnel is up.
+                        if root.shown-state != ConnState.connected && root.card-remote != "": Text {
+                            font-size: 12px;
+                            color: Theme.text-muted;
+                            overflow: elide;
+                            text: root.card-remote;
                         }
                     }
 
-                    Row {
-                        Stat {
-                            label: Labels.received;
-                            value: root.rx;
+                    if root.shown-state == ConnState.connected: GridLayout {
+                        spacing: 12px;
+                        Row {
+                            Stat {
+                                label: Labels.vpn-address;
+                                value: root.local-ip;
+                            }
+
+                            Stat {
+                                label: Labels.server;
+                                value: root.remote;
+                            }
                         }
 
-                        Stat {
-                            label: Labels.sent;
-                            value: root.tx;
+                        Row {
+                            Stat {
+                                label: Labels.received;
+                                value: root.rx;
+                            }
+
+                            Stat {
+                                label: Labels.sent;
+                                value: root.tx;
+                            }
                         }
+                    }
+
+                    if root.shown-state == ConnState.connected: Sparkline {
+                        samples: root.samples;
                     }
                 }
             }
-        }
 
-        if root.profile-count > 0: BigButton {
-            primary: !root.busy;
-            text: !root.busy ? Labels.connect
-                : root.conn-state == ConnState.disconnecting ? Labels.state-disconnecting
-                : Labels.disconnect;
-            enabled: root.busy ? root.conn-state != ConnState.disconnecting : root.has-selection;
-            clicked => {
-                if root.busy {
-                    root.disconnect();
-                } else {
-                    root.connect(root.selected);
-                }
-            }
-        }
-
-        if root.profile-count > 0: HorizontalLayout {
-            padding-top: 4px;
-            spacing: 8px;
-            Text {
-                text: Labels.profiles;
-                font-size: 16px;
-                font-weight: 700;
-                color: Theme.text;
-            }
-
-            Text {
-                text: "(" + root.profile-count + ")";
-                font-size: 14px;
-                color: Theme.text-muted;
-                vertical-alignment: center;
-                horizontal-stretch: 1;
-            }
-
-            Link {
-                text: Labels.import-label;
-                font-size: 14px;
-                vertical-alignment: center;
+            if root.profile-count > 0: Button {
+                primary: !root.busy;
+                font-size: 15px;
+                min-height: 52px;
+                text: !root.busy ? Labels.connect
+                    : root.conn-state == ConnState.disconnecting ? Labels.state-disconnecting
+                    : Labels.disconnect;
+                enabled: root.busy ? root.conn-state != ConnState.disconnecting : root.has-selection;
                 clicked => {
-                    root.import-profile();
+                    if root.busy {
+                        root.disconnect();
+                    } else {
+                        root.connect(root.selected);
+                    }
                 }
             }
-        }
 
-        // Only worth the space once the list is long enough to scan.
-        if root.profile-count > 4: Field {
-            placeholder: Labels.search-placeholder;
-            text <=> root.search-query;
-        }
-
-        if root.notice != "": Rectangle {
-            border-radius: Theme.radius-md;
-            background: root.notice-error ? Theme.error.transparentize(0.9) : Theme.accent-soft;
-            min-height: notice-text.preferred-height;
-            notice-text := VerticalLayout {
-                padding-left: 14px;
-                padding-right: 14px;
-                padding-top: 12px;
-                padding-bottom: 12px;
+            if root.profile-count > 0: HorizontalLayout {
+                padding-top: 2px;
+                spacing: 6px;
                 Text {
-                    text: root.notice;
-                    font-size: 13px;
-                    wrap: word-wrap;
-                    color: root.notice-error ? Theme.error : Theme.text;
+                    text: Labels.profiles;
+                    font-size: 14px;
+                    font-weight: 600;
+                    color: Theme.text;
+                    vertical-alignment: center;
                 }
-            }
-        }
 
-        ListView {
-            vertical-stretch: 1;
-            for profile[i] in root.profiles: VerticalLayout {
-                padding-bottom: 6px;
-                ProfileRow {
-                    name: profile.name;
-                    saved-password: profile.saved-password;
-                    selected: profile.index == root.selected;
-                    connected: profile.index == root.active && root.conn-state == ConnState.connected;
-                    can-remove: profile.index != root.active;
-                    clicked => {
-                        root.select-profile(profile.index);
-                    }
-                    remove => {
-                        root.request-remove(profile.index);
-                    }
-                    forget-password => {
-                        root.forget-password(profile.index);
-                    }
-                }
-            }
-        }
-
-        VerticalLayout {
-            spacing: 2px;
-            HorizontalLayout {
                 Text {
-                    text: "VPNdeck " + root.version;
+                    text: root.profile-count;
                     font-size: 12px;
                     color: Theme.text-muted;
+                    vertical-alignment: center;
                     horizontal-stretch: 1;
                 }
 
-                Link {
-                    font-size: 12px;
-                    enabled: root.can-check;
-                    text: root.update-state == UpdateState.checking ? Labels.checking : Labels.check-updates;
+                GhostButton {
+                    text: Labels.import-label;
                     clicked => {
-                        root.check-updates();
+                        root.add-visible = true;
                     }
                 }
             }
 
-            if root.update-note != "": Text {
-                text: root.update-note;
+            // Only worth the space once the list is long enough to scan.
+            search := Field {
+                visible: root.show-search;
+                placeholder: Labels.search-placeholder;
+                text <=> root.search-query;
+            }
+
+            if root.profiles.length == 0 && root.profile-count > 0: Text {
+                text: Labels.search-empty;
+                font-size: 13px;
+                color: Theme.text-muted;
+                horizontal-alignment: center;
+                vertical-stretch: 1;
+                vertical-alignment: center;
+            }
+
+            // With no profiles the empty card owns the free space instead.
+            if root.profile-count > 0: ListView {
+                vertical-stretch: 1;
+                for profile[i] in root.profiles: VerticalLayout {
+                    padding-bottom: 4px;
+                    ProfileRow {
+                        name: profile.name;
+                        remote: profile.remote;
+                        initials: profile.initials;
+                        saved-password: profile.saved-password;
+                        selected: profile.index == root.selected;
+                        connected: profile.index == root.active && root.conn-state == ConnState.connected;
+                        can-remove: profile.index != root.active;
+                        clicked => {
+                            root.select-profile(profile.index);
+                        }
+                        rename => {
+                            root.request-rename(profile.index);
+                        }
+                        view => {
+                            root.view-profile(profile.index);
+                        }
+                        remove => {
+                            root.request-remove(profile.index);
+                        }
+                        forget-password => {
+                            root.forget-password(profile.index);
+                        }
+                    }
+                }
+            }
+
+            VerticalLayout {
+                spacing: 2px;
+                HorizontalLayout {
+                    Text {
+                        text: "v" + root.version;
+                        font-size: 11px;
+                        color: Theme.text-muted;
+                        horizontal-stretch: 1;
+                        vertical-alignment: center;
+                    }
+
+                    Link {
+                        font-size: 11px;
+                        enabled: root.can-check;
+                        text: root.update-state == UpdateState.checking ? Labels.checking : Labels.check-updates;
+                        clicked => {
+                            root.check-updates();
+                        }
+                    }
+                }
+
+                if root.update-note != "": Text {
+                    text: root.update-note;
+                    font-size: 11px;
+                    wrap: word-wrap;
+                    color: Theme.text-muted;
+                }
+            }
+        }
+    }
+
+    // Dropping .ovpn files anywhere on the window imports them.
+    drop := DropArea {
+        can-drop(event) => {
+            return DragAction.copy;
+        }
+        dropped(event) => {
+            root.files-dropped(event.data);
+            return DragAction.copy;
+        }
+    }
+
+    if drop.has-drag: Rectangle {
+        border-width: 2px;
+        border-color: Theme.accent;
+        border-radius: Theme.radius-lg;
+        background: Theme.accent.transparentize(0.88);
+        Text {
+            text: Labels.add-hint;
+            font-size: 14px;
+            font-weight: 600;
+            color: Theme.accent;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            wrap: word-wrap;
+        }
+    }
+
+    // A short message over the content, gone after a few seconds.
+    if root.toast != "": Rectangle {
+        x: 20px;
+        y: parent.height - self.height - 20px;
+        width: parent.width - 40px;
+        height: toast-body.preferred-height + 22px;
+        border-radius: Theme.radius-md;
+        background: Theme.surface;
+        border-width: 1px;
+        border-color: root.toast-error ? Theme.error : Theme.line;
+        drop-shadow-color: Theme.shadow;
+        drop-shadow-blur: Theme.shadow-blur;
+        drop-shadow-offset-y: 6px;
+
+        toast-body := VerticalLayout {
+            padding-left: 14px;
+            padding-right: 14px;
+            padding-top: 11px;
+            padding-bottom: 11px;
+            Text {
+                text: root.toast;
                 font-size: 12px;
                 wrap: word-wrap;
-                color: Theme.text-muted;
+                color: root.toast-error ? Theme.error : Theme.text;
             }
         }
     }
@@ -928,65 +1570,95 @@ export component AppWindow inherits Window {
 
         Text {
             text: Labels.settings;
-            font-size: 20px;
+            font-size: 18px;
             font-weight: 700;
             color: Theme.text;
         }
 
-        Text {
-            text: Labels.theme;
-            font-size: 14px;
-            color: Theme.text-muted;
-        }
-
-        HorizontalLayout {
-            spacing: 10px;
-            BigButton {
-                primary: Theme.dark;
-                text: Labels.dark;
-                font-size: 15px;
-                min-height: 44px;
-                clicked => {
-                    root.set-theme(true);
-                }
+        VerticalLayout {
+            spacing: 6px;
+            Text {
+                text: Labels.theme;
+                font-size: 12px;
+                color: Theme.text-muted;
             }
 
-            BigButton {
-                primary: !Theme.dark;
-                text: Labels.light;
-                font-size: 15px;
-                min-height: 44px;
-                clicked => {
-                    root.set-theme(false);
+            Segmented {
+                first: Labels.dark;
+                second: Labels.light;
+                third: Labels.system;
+                current: root.theme-mode == "light" ? 1 : root.theme-mode == "system" ? 2 : 0;
+                picked(index) => {
+                    root.set-theme(index == 0 ? "dark" : index == 1 ? "light" : "system");
                 }
             }
         }
 
-        Text {
-            text: Labels.language;
-            font-size: 14px;
-            color: Theme.text-muted;
+        VerticalLayout {
+            spacing: 6px;
+            Text {
+                text: Labels.language;
+                font-size: 12px;
+                color: Theme.text-muted;
+            }
+
+            Segmented {
+                first: "English";
+                second: "Русский";
+                current: root.lang == "ru" ? 1 : 0;
+                picked(index) => {
+                    root.set-language(index == 0 ? "en" : "ru");
+                }
+            }
         }
 
-        HorizontalLayout {
-            spacing: 10px;
-            BigButton {
-                primary: root.lang == "en";
-                text: "English";
-                font-size: 15px;
-                min-height: 44px;
-                clicked => {
-                    root.set-language("en");
+        VerticalLayout {
+            spacing: 2px;
+            Text {
+                text: Labels.startup;
+                font-size: 12px;
+                color: Theme.text-muted;
+            }
+
+            SettingRow {
+                label: Labels.autostart;
+                Toggle {
+                    label: Labels.autostart;
+                    checked <=> root.autostart;
+                    toggled(value) => {
+                        root.set-autostart(value);
+                    }
                 }
             }
 
-            BigButton {
-                primary: root.lang == "ru";
-                text: "Русский";
-                font-size: 15px;
-                min-height: 44px;
-                clicked => {
-                    root.set-language("ru");
+            SettingRow {
+                label: Labels.auto-connect;
+                Toggle {
+                    label: Labels.auto-connect;
+                    checked <=> root.auto-connect;
+                    toggled(value) => {
+                        root.set-auto-connect(value);
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            spacing: 2px;
+            Text {
+                text: Labels.notifications;
+                font-size: 12px;
+                color: Theme.text-muted;
+            }
+
+            SettingRow {
+                label: Labels.notify-on;
+                Toggle {
+                    label: Labels.notify-on;
+                    checked <=> root.notifications;
+                    toggled(value) => {
+                        root.set-notifications(value);
+                    }
                 }
             }
         }
@@ -994,14 +1666,154 @@ export component AppWindow inherits Window {
         HorizontalLayout {
             alignment: end;
             padding-top: 4px;
-            BigButton {
+            Button {
                 primary: false;
                 text: Labels.close;
-                font-size: 15px;
-                min-height: 44px;
+                font-size: 14px;
+                min-height: 42px;
                 width: 110px;
                 clicked => {
                     root.settings-visible = false;
+                }
+            }
+        }
+    }
+
+    if root.add-visible: Modal {
+        cancel => {
+            root.add-visible = false;
+        }
+
+        Text {
+            text: Labels.add-title;
+            font-size: 18px;
+            font-weight: 700;
+            color: Theme.text;
+        }
+
+        Button {
+            text: Labels.add-files;
+            font-size: 14px;
+            min-height: 44px;
+            clicked => {
+                root.add-visible = false;
+                root.import-profile();
+            }
+        }
+
+        Button {
+            primary: false;
+            text: Labels.add-paste;
+            font-size: 14px;
+            min-height: 44px;
+            clicked => {
+                root.import-clipboard();
+            }
+        }
+
+        VerticalLayout {
+            spacing: 6px;
+            Text {
+                text: Labels.add-url;
+                font-size: 12px;
+                color: Theme.text-muted;
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                url-field := Field {
+                    horizontal-stretch: 1;
+                    placeholder: Labels.add-url-placeholder;
+                    text <=> root.add-url;
+                    accepted => {
+                        root.import-url(root.add-url);
+                    }
+                }
+
+                Button {
+                    text: Labels.continue-button;
+                    font-size: 13px;
+                    min-height: 44px;
+                    width: 104px;
+                    enabled: root.add-url != "";
+                    clicked => {
+                        root.import-url(root.add-url);
+                    }
+                }
+            }
+        }
+
+        Text {
+            text: Labels.add-hint;
+            font-size: 12px;
+            wrap: word-wrap;
+            color: Theme.text-muted;
+        }
+
+        HorizontalLayout {
+            alignment: end;
+            padding-top: 2px;
+            Button {
+                primary: false;
+                text: Labels.cancel;
+                font-size: 14px;
+                min-height: 42px;
+                width: 110px;
+                clicked => {
+                    root.add-visible = false;
+                }
+            }
+        }
+    }
+
+    if root.rename-visible: Modal {
+        cancel => {
+            root.rename-visible = false;
+        }
+
+        Text {
+            text: Labels.rename-title;
+            font-size: 18px;
+            font-weight: 700;
+            color: Theme.text;
+        }
+
+        rename-field := Field {
+            text <=> root.rename-name;
+            init => {
+                self.focus-input();
+            }
+            accepted => {
+                root.rename-profile(root.rename-index, root.rename-name);
+            }
+        }
+
+        if root.rename-error != "": Text {
+            text: root.rename-error;
+            font-size: 13px;
+            wrap: word-wrap;
+            color: Theme.error;
+        }
+
+        HorizontalLayout {
+            spacing: 10px;
+            padding-top: 4px;
+            Button {
+                primary: false;
+                text: Labels.cancel;
+                font-size: 14px;
+                min-height: 42px;
+                clicked => {
+                    root.rename-visible = false;
+                }
+            }
+
+            Button {
+                text: Labels.rename;
+                font-size: 14px;
+                min-height: 42px;
+                clicked => {
+                    root.rename-profile(root.rename-index, root.rename-name);
                 }
             }
         }
@@ -1015,7 +1827,7 @@ export component AppWindow inherits Window {
         Text {
             text: root.confirm-title;
             wrap: word-wrap;
-            font-size: 20px;
+            font-size: 18px;
             font-weight: 700;
             color: Theme.text;
         }
@@ -1023,17 +1835,18 @@ export component AppWindow inherits Window {
         Text {
             text: root.confirm-saved-password ? Labels.remove-body-saved : Labels.remove-body;
             wrap: word-wrap;
+            font-size: 13px;
             color: Theme.text-muted;
         }
 
         HorizontalLayout {
             spacing: 10px;
             padding-top: 4px;
-            BigButton {
+            Button {
                 primary: false;
                 text: Labels.cancel;
-                font-size: 15px;
-                min-height: 44px;
+                font-size: 14px;
+                min-height: 42px;
                 init => {
                     self.focus();
                 }
@@ -1042,10 +1855,10 @@ export component AppWindow inherits Window {
                 }
             }
 
-            BigButton {
+            Button {
                 text: Labels.remove;
-                font-size: 15px;
-                min-height: 44px;
+                font-size: 14px;
+                min-height: 42px;
                 clicked => {
                     root.remove-profile(root.confirm-remove);
                     root.confirm-remove = -1;
@@ -1062,7 +1875,7 @@ export component AppWindow inherits Window {
         Text {
             text: root.auth-title;
             wrap: word-wrap;
-            font-size: 20px;
+            font-size: 18px;
             font-weight: 700;
             color: Theme.text;
         }
@@ -1070,6 +1883,7 @@ export component AppWindow inherits Window {
         if root.auth-password-saved: Text {
             text: Labels.password-saved-hint;
             wrap: word-wrap;
+            font-size: 13px;
             color: Theme.text-muted;
         }
 
@@ -1090,9 +1904,10 @@ export component AppWindow inherits Window {
             visible: root.auth-needs-password;
             placeholder: Labels.password;
             password: true;
+            reveal: root.auth-reveal;
             text <=> root.auth-password;
             init => {
-                if !root.auth-needs-username || root.auth-username != "" {
+                if root.auth-needs-password && (!root.auth-needs-username || root.auth-username != "") {
                     self.focus-input();
                 }
             }
@@ -1105,12 +1920,18 @@ export component AppWindow inherits Window {
             }
         }
 
+        if root.auth-needs-password: Check {
+            text: Labels.show-password;
+            checked <=> root.auth-reveal;
+        }
+
         VerticalLayout {
             visible: root.auth-needs-code;
             spacing: 6px;
             if root.auth-challenge-text != "": Text {
                 text: root.auth-challenge-text;
                 wrap: word-wrap;
+                font-size: 13px;
                 color: Theme.text-muted;
             }
 
@@ -1136,6 +1957,7 @@ export component AppWindow inherits Window {
 
         if root.auth-password-saved: Link {
             text: Labels.change-password;
+            font-size: 13px;
             clicked => {
                 root.change-password();
             }
@@ -1144,26 +1966,27 @@ export component AppWindow inherits Window {
         if root.auth-error != "": Text {
             text: root.auth-error;
             wrap: word-wrap;
+            font-size: 13px;
             color: Theme.error;
         }
 
         HorizontalLayout {
             spacing: 10px;
             padding-top: 4px;
-            BigButton {
+            Button {
                 primary: false;
                 text: Labels.cancel;
-                font-size: 15px;
-                min-height: 44px;
+                font-size: 14px;
+                min-height: 42px;
                 clicked => {
                     root.cancel-auth();
                 }
             }
 
-            BigButton {
+            Button {
                 text: root.auth-needs-password ? Labels.sign-in : Labels.continue-button;
-                font-size: 15px;
-                min-height: 44px;
+                font-size: 14px;
+                min-height: 42px;
                 clicked => {
                     root.submit-auth(root.auth-username, root.auth-password, root.auth-code);
                 }
@@ -1174,18 +1997,21 @@ export component AppWindow inherits Window {
 
 export component LogWindow inherits Window {
     title: Labels.log-title;
-    icon: @image-url("../assets/vpndeck-256.png");
+    icon: @image-url("../assets/ether-256.png");
     preferred-width: 760px;
     preferred-height: 460px;
-    default-font-size: 15px;
+    default-font-size: 14px;
     default-font-family: Theme.font-family;
     background: Theme.bg;
 
-    in property <[string]> lines;
+    in property <[LogLine]> lines;
     in property <int> count;
+    in-out property <string> filter;
     callback copy-all();
+    callback copy-diagnostics();
     callback save();
     callback clear();
+    callback filter-changed(string);
 
     // Whether new lines scroll into view; off while the user reads further up.
     property <bool> follow: true;
@@ -1196,44 +2022,49 @@ export component LogWindow inherits Window {
         }
     }
 
+    changed filter => {
+        root.filter-changed(root.filter);
+    }
+
     VerticalLayout {
         padding: 20px;
-        spacing: 14px;
+        spacing: 12px;
         HorizontalLayout {
-            spacing: 18px;
+            spacing: 8px;
             Text {
                 text: Labels.connection-log;
-                font-size: 18px;
+                font-size: 16px;
                 font-weight: 700;
                 color: Theme.text;
                 horizontal-stretch: 1;
                 vertical-alignment: center;
             }
 
-            Link {
+            GhostButton {
+                text: Labels.diagnostics;
+                clicked => {
+                    root.copy-diagnostics();
+                }
+            }
+
+            GhostButton {
                 text: Labels.copy-all;
-                font-size: 14px;
-                vertical-alignment: center;
                 enabled: root.lines.length > 0;
                 clicked => {
                     root.copy-all();
                 }
             }
 
-            Link {
+            GhostButton {
                 text: Labels.save;
-                font-size: 14px;
-                vertical-alignment: center;
                 enabled: root.lines.length > 0;
                 clicked => {
                     root.save();
                 }
             }
 
-            Link {
+            GhostButton {
                 text: Labels.clear;
-                font-size: 14px;
-                vertical-alignment: center;
                 enabled: root.lines.length > 0;
                 clicked => {
                     root.clear();
@@ -1241,9 +2072,15 @@ export component LogWindow inherits Window {
             }
         }
 
+        Field {
+            placeholder: Labels.log-filter-placeholder;
+            text <=> root.filter;
+        }
+
         if root.lines.length == 0: Text {
             color: Theme.text-muted;
-            text: Labels.log-empty;
+            font-size: 13px;
+            text: root.filter == "" ? Labels.log-empty : Labels.log-nothing-found;
             wrap: word-wrap;
         }
 
@@ -1253,11 +2090,164 @@ export component LogWindow inherits Window {
                 root.follow = self.content-y <= self.visible-height - self.content-height + 24px;
             }
             for line in root.lines: Text {
-                text: line;
+                text: line.text;
                 wrap: word-wrap;
                 font-family: "monospace";
                 font-size: 12px;
-                color: Theme.text;
+                color: line.level == 2 ? Theme.error : line.level == 1 ? Theme.warning : Theme.text;
+            }
+        }
+    }
+}
+
+// The profile as text, with a pre-connect check on top. Read-only: editing a
+// profile by hand is what the file manager is for.
+export component ProfileWindow inherits Window {
+    title: Labels.view-title;
+    icon: @image-url("../assets/ether-256.png");
+    preferred-width: 720px;
+    preferred-height: 560px;
+    default-font-size: 14px;
+    default-font-family: Theme.font-family;
+    background: Theme.bg;
+
+    in property <string> profile-name;
+    in property <string> profile-remote;
+    in property <[ProfileLine]> lines;
+    in property <[CheckLine]> checks;
+    in property <bool> checking;
+    in property <bool> has-risky;
+    callback check();
+    callback copy();
+    callback close-window();
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 12px;
+
+        HorizontalLayout {
+            spacing: 10px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 2px;
+                Text {
+                    text: root.profile-name;
+                    font-size: 16px;
+                    font-weight: 700;
+                    color: Theme.text;
+                    overflow: elide;
+                }
+
+                if root.profile-remote != "": Text {
+                    text: root.profile-remote;
+                    font-size: 12px;
+                    color: Theme.text-muted;
+                    overflow: elide;
+                }
+            }
+
+            GhostButton {
+                text: root.checking ? Labels.view-checking : Labels.view-check;
+                enabled: !root.checking;
+                clicked => {
+                    root.check();
+                }
+            }
+        }
+
+        if root.has-risky: Rectangle {
+            border-radius: Theme.radius-md;
+            border-width: 1px;
+            border-color: Theme.warning;
+            VerticalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 10px;
+                padding-bottom: 10px;
+                Text {
+                    text: Labels.view-risky;
+                    font-size: 12px;
+                    color: Theme.warning;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        if root.checks.length > 0: VerticalLayout {
+            spacing: 6px;
+            for check in root.checks: HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                Rectangle {
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 4px;
+                    background: check.state == 0 ? Theme.success : check.state == 1 ? Theme.error : Theme.text-muted;
+                }
+
+                Text {
+                    text: check.label;
+                    font-size: 12px;
+                    color: Theme.text;
+                    width: 150px;
+                    overflow: elide;
+                }
+
+                Text {
+                    text: check.detail;
+                    font-size: 12px;
+                    color: check.state == 1 ? Theme.error : Theme.text-muted;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+            }
+        }
+
+        ListView {
+            vertical-stretch: 1;
+            for line in root.lines: HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                Text {
+                    text: "\{line.number}";
+                    width: 34px;
+                    horizontal-alignment: end;
+                    font-family: "monospace";
+                    font-size: 12px;
+                    color: Theme.text-muted;
+                }
+
+                Text {
+                    text: line.text;
+                    horizontal-stretch: 1;
+                    wrap: word-wrap;
+                    font-family: "monospace";
+                    font-size: 12px;
+                    color: line.risky ? Theme.warning : Theme.text;
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 10px;
+            GhostButton {
+                text: Labels.view-copy;
+                clicked => {
+                    root.copy();
+                }
+            }
+
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+
+            Button {
+                text: Labels.view-close;
+                font-size: 14px;
+                min-height: 40px;
+                clicked => {
+                    root.close-window();
+                }
             }
         }
     }

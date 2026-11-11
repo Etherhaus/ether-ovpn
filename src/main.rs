@@ -1,13 +1,17 @@
+mod autostart;
 mod i18n;
+mod notify;
 mod openvpn;
+mod preflight;
 mod profiles;
 mod secrets;
 mod settings;
+mod theme;
 mod tray;
 mod updater;
 
 use std::cell::{Cell, RefCell};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -19,6 +23,14 @@ use i18n::{Lang, Strings};
 slint::include_modules!();
 
 const MAX_LOG_LINES: usize = 2000;
+/// How many traffic samples the sparkline keeps.
+const MAX_SAMPLES: usize = 40;
+const RECONNECT_DELAY: Duration = Duration::from_secs(5);
+const MAX_RECONNECTS: u8 = 3;
+const TOAST_TIME: Duration = Duration::from_secs(4);
+const TOAST_ERROR_TIME: Duration = Duration::from_secs(7);
+/// A profile fetched from a link is a text file; anything bigger isn't one.
+const MAX_PROFILE_BYTES: u64 = 1024 * 1024;
 
 /// Everything that reaches the UI thread from other threads.
 enum Msg {
@@ -31,6 +43,8 @@ enum Msg {
     SavedPassword { session: u64, req: openvpn::AuthRequest, result: Result<Option<String>, String> },
     /// A password was saved to (`saved`) or removed from the keyring.
     PasswordStored { file: PathBuf, saved: bool, result: Result<(), String> },
+    /// A profile downloaded from a link, ready to import.
+    Fetched { name: String, result: Result<String, String> },
 }
 
 struct App {
@@ -56,12 +70,70 @@ struct App {
     tray_state: tray::State,
     release: Option<updater::Release>,
     install: Option<updater::Install>,
+    /// The palette in use, resolved from the theme setting.
+    dark: bool,
+    /// When the toast should disappear.
+    toast_until: Option<Instant>,
+    /// A reconnect waiting for its delay, with the attempt number.
+    retry: Option<(Instant, u8)>,
+    /// The profile the retry belongs to.
+    retry_profile: Option<usize>,
+    /// Whether the last connection reached CONNECTED, so a drop is worth retrying.
+    was_connected: bool,
+    /// Traffic samples for the sparkline, oldest first.
+    samples: Vec<f32>,
+    last_bytes: (u64, u64),
+    last_sample: Instant,
+    /// Every log line, so the filter can rebuild the visible list.
+    log_all: Vec<LogLine>,
+    log_filter: String,
+    /// Whether the "still running in the tray" hint was already shown.
+    tray_hint_shown: bool,
+    /// The profile the profile window is showing, so its check knows what to look at.
+    viewing: Option<usize>,
+}
+
+/// A window that is built the first time it is opened.
+///
+/// On Wayland the compositor maps a Slint window as soon as it exists, so a
+/// window created up front shows up in the dock even when it is never opened.
+struct LazyWindow<T> {
+    window: RefCell<Option<T>>,
+    build: Box<dyn Fn() -> Result<T, slint::PlatformError>>,
+}
+
+impl<T: ComponentHandle> LazyWindow<T> {
+    fn new(build: impl Fn() -> Result<T, slint::PlatformError> + 'static) -> Rc<Self> {
+        Rc::new(Self { window: RefCell::new(None), build: Box::new(build) })
+    }
+
+    /// The window, built on the first call.
+    fn open(&self) -> Option<T> {
+        if let Some(window) = self.window.borrow().as_ref() {
+            return Some(window.clone_strong());
+        }
+        match (self.build)() {
+            Ok(window) => {
+                *self.window.borrow_mut() = Some(window.clone_strong());
+                Some(window)
+            }
+            Err(e) => {
+                eprintln!("ether-ovpn: cannot create a window: {e}");
+                None
+            }
+        }
+    }
+
+    /// The window if it was already opened, without building it.
+    fn opened(&self) -> Option<T> {
+        self.window.borrow().as_ref().map(|window| window.clone_strong())
+    }
 }
 
 fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     // Wayland compositors find the window's icon through the desktop entry named by the app id.
-    let app_id = std::env::var("FLATPAK_ID").unwrap_or_else(|_| "vpndeck".into());
+    let app_id = std::env::var("FLATPAK_ID").unwrap_or_else(|_| "ether-ovpn".into());
     slint::set_xdg_app_id(app_id)?;
     let (tx, rx) = mpsc::channel::<Msg>();
     let tray = {
@@ -70,9 +142,14 @@ fn main() -> Result<(), slint::PlatformError> {
             let _ = tx.send(Msg::Tray(command));
         })
     };
+    let mut settings = settings::Settings::load();
+    // The autostart entry is the source of truth: the user may have removed it
+    // from the desktop's own startup settings.
+    settings.autostart = autostart::enabled();
+    let dark = settings.dark();
     let app = Rc::new(RefCell::new(App {
         store: profiles::Store::load(),
-        settings: settings::Settings::load(),
+        settings,
         query: String::new(),
         session: None,
         session_id: 0,
@@ -88,43 +165,213 @@ fn main() -> Result<(), slint::PlatformError> {
         tray_state: tray::State::default(),
         release: None,
         install: None,
+        dark,
+        toast_until: None,
+        retry: None,
+        retry_profile: None,
+        was_connected: false,
+        samples: Vec::new(),
+        last_bytes: (0, 0),
+        last_sample: Instant::now(),
+        log_all: Vec::new(),
+        log_filter: String::new(),
+        tray_hint_shown: false,
+        viewing: None,
     }));
 
-    let log_window = LogWindow::new()?;
     let profile_model = Rc::new(VecModel::<ProfileInfo>::default());
-    let log_model = Rc::new(VecModel::<SharedString>::default());
+    let log_model = Rc::new(VecModel::<LogLine>::default());
+    let sample_model = Rc::new(VecModel::<f32>::default());
+    let profile_line_model = Rc::new(VecModel::<ProfileLine>::default());
+    // arboard serves the copied text for as long as the clipboard object lives.
+    let clipboard = Rc::new(RefCell::new(None::<arboard::Clipboard>));
+
+    let log_window = LazyWindow::new({
+        let app = app.clone();
+        let log_model = log_model.clone();
+        let clipboard = clipboard.clone();
+        let ui_weak = ui.as_weak();
+        move || {
+            let window = LogWindow::new()?;
+            window.set_lines(ModelRc::from(log_model.clone()));
+            window.on_copy_all({
+                let app = app.clone();
+                let clipboard = clipboard.clone();
+                move || {
+                    let text = log_text(&app.borrow().log_all);
+                    let mut clipboard = clipboard.borrow_mut();
+                    if clipboard.is_none() {
+                        *clipboard = arboard::Clipboard::new().ok();
+                    }
+                    if let Some(clipboard) = clipboard.as_mut() {
+                        let _ = clipboard.set_text(text);
+                    }
+                }
+            });
+            window.on_copy_diagnostics({
+                let ui_weak = ui_weak.clone();
+                let app = app.clone();
+                let clipboard = clipboard.clone();
+                move || {
+                    let Some(ui) = ui_weak.upgrade() else { return };
+                    let mut app = app.borrow_mut();
+                    let text = diagnostics(&app);
+                    let mut clipboard = clipboard.borrow_mut();
+                    if clipboard.is_none() {
+                        *clipboard = arboard::Clipboard::new().ok();
+                    }
+                    let copied = clipboard.as_mut().is_some_and(|clipboard| clipboard.set_text(text).is_ok());
+                    let t = Strings::new(app.settings.lang());
+                    let message = if copied { t.diagnostics_copied } else { t.diagnostics_failed };
+                    toast(&ui, &mut app, message, !copied);
+                }
+            });
+            window.on_filter_changed({
+                let window_weak = window.as_weak();
+                let app = app.clone();
+                let log_model = log_model.clone();
+                move |query| {
+                    let Some(window) = window_weak.upgrade() else { return };
+                    let mut app = app.borrow_mut();
+                    app.log_filter = query.to_string();
+                    rebuild_log(&window, &log_model, &app);
+                }
+            });
+            window.on_save({
+                let app = app.clone();
+                let saving = Rc::new(Cell::new(false));
+                move || {
+                    if saving.replace(true) {
+                        return;
+                    }
+                    let title = Strings::new(app.borrow().settings.lang()).save_log_title;
+                    let text = log_text(&app.borrow().log_all);
+                    let saving = saving.clone();
+                    let _ = slint::spawn_local(async move {
+                        let file = rfd::AsyncFileDialog::new().set_title(title).set_file_name("ether-ovpn.log").save_file().await;
+                        saving.set(false);
+                        if let Some(file) = file {
+                            let _ = std::fs::write(file.path(), text);
+                        }
+                    });
+                }
+            });
+            window.on_clear({
+                let log_model = log_model.clone();
+                let app = app.clone();
+                move || {
+                    let mut app = app.borrow_mut();
+                    app.log_all.clear();
+                    log_model.set_vec(Vec::new());
+                }
+            });
+            // Lines may have arrived before the window existed, so ask the view
+            // to scroll to the end the way a new line would.
+            window.set_count(1);
+            Ok(window)
+        }
+    });
+
+    let profile_window = LazyWindow::new({
+        let app = app.clone();
+        let clipboard = clipboard.clone();
+        let profile_line_model = profile_line_model.clone();
+        move || {
+            let window = ProfileWindow::new()?;
+            window.set_lines(ModelRc::from(profile_line_model.clone()));
+            window.on_check({
+                let window_weak = window.as_weak();
+                let app = app.clone();
+                move || {
+                    let Some(window) = window_weak.upgrade() else { return };
+                    let (profile, t) = {
+                        let app = app.borrow();
+                        let Some(profile) = app.viewing.and_then(|i| app.store.profiles.get(i)).cloned() else { return };
+                        (profile, Strings::new(app.settings.lang()))
+                    };
+                    window.set_checking(true);
+                    window.set_checks(ModelRc::from(Rc::new(VecModel::<CheckLine>::default())));
+                    let window_weak = window.as_weak();
+                    // Name lookups and socket probes block, so they stay off the UI thread.
+                    std::thread::spawn(move || {
+                        let rows: Vec<CheckLine> = preflight::run(&profile).iter().map(|c| check_line(c, &t)).collect();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(window) = window_weak.upgrade() {
+                                window.set_checking(false);
+                                window.set_checks(ModelRc::from(Rc::new(VecModel::from(rows))));
+                            }
+                        });
+                    });
+                }
+            });
+            window.on_copy({
+                let app = app.clone();
+                let clipboard = clipboard.clone();
+                move || {
+                    let app = app.borrow();
+                    let Some(profile) = app.viewing.and_then(|i| app.store.profiles.get(i)) else { return };
+                    let Ok(text) = std::fs::read_to_string(&profile.file) else { return };
+                    let mut clipboard = clipboard.borrow_mut();
+                    if clipboard.is_none() {
+                        *clipboard = arboard::Clipboard::new().ok();
+                    }
+                    if let Some(clipboard) = clipboard.as_mut() {
+                        let _ = clipboard.set_text(text);
+                    }
+                }
+            });
+            window.on_close_window({
+                let window_weak = window.as_weak();
+                move || {
+                    if let Some(window) = window_weak.upgrade() {
+                        let _ = window.hide();
+                    }
+                }
+            });
+            Ok(window)
+        }
+    });
+
     ui.set_profiles(ModelRc::from(profile_model.clone()));
-    log_window.set_lines(ModelRc::from(log_model.clone()));
+    ui.set_samples(ModelRc::from(sample_model.clone()));
     ui.set_version(updater::current_version().into());
-    apply_theme(&ui, app.borrow().settings.dark());
+    apply_theme(&ui, app.borrow().dark);
     let lang = app.borrow().settings.lang();
     i18n::apply(&ui, lang);
     ui.set_lang(lang.code().into());
     ui.set_status_text(Strings::new(lang).state_idle.into());
+    sync_settings(&ui, &app.borrow());
     sync_profiles(&ui, &app.borrow().store, &profile_model, &app.borrow().query);
     if !app.borrow().store.profiles.is_empty() {
         ui.set_selected(0);
     }
     update_card_name(&ui, &app.borrow());
+    if let Some((width, height)) = app.borrow().settings.window_size() {
+        ui.window().set_size(slint::LogicalSize::new(width as f32, height as f32));
+    }
 
     ui.on_show_log({
-        let log_weak = log_window.as_weak();
+        let log_window = log_window.clone();
         move || {
-            let _ = log_weak.unwrap().show();
+            if let Some(window) = log_window.open() {
+                let _ = window.show();
+            }
         }
     });
 
     ui.on_set_theme({
         let ui_weak = ui.as_weak();
         let app = app.clone();
-        move |dark| {
+        move |mode| {
             let ui = ui_weak.unwrap();
-            apply_theme(&ui, dark);
             let mut app = app.borrow_mut();
-            app.settings.set_dark(dark);
+            app.settings.set_theme(&mode);
+            app.dark = app.settings.dark();
+            apply_theme(&ui, app.dark);
+            ui.set_theme_mode(app.settings.theme_mode().into());
             if let Err(e) = app.settings.save() {
                 let t = Strings::new(app.settings.lang());
-                set_notice(&ui, i18n::fill(t.theme_save_failed, &[&e.to_string()]), true);
+                toast(&ui, &mut app, i18n::fill(t.theme_save_failed, &[&e.to_string()]), true);
             }
         }
     });
@@ -140,7 +387,7 @@ fn main() -> Result<(), slint::PlatformError> {
             app.settings.set_lang(lang);
             if let Err(e) = app.settings.save() {
                 let t = Strings::new(lang);
-                set_notice(&ui, i18n::fill(t.language_save_failed, &[&e.to_string()]), true);
+                toast(&ui, &mut app, i18n::fill(t.language_save_failed, &[&e.to_string()]), true);
             }
             i18n::apply(&ui, lang);
             ui.set_lang(lang.code().into());
@@ -150,6 +397,44 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             sync_profiles(&ui, &app.store, &profile_model, &app.query);
             update_card_name(&ui, &app);
+        }
+    });
+
+    ui.on_set_autostart({
+        let ui_weak = ui.as_weak();
+        let app = app.clone();
+        move |on| {
+            let ui = ui_weak.unwrap();
+            let mut app = app.borrow_mut();
+            match autostart::set(on) {
+                Ok(()) => {
+                    app.settings.autostart = on;
+                    let _ = app.settings.save();
+                }
+                Err(e) => {
+                    let t = Strings::new(app.settings.lang());
+                    toast(&ui, &mut app, i18n::fill(t.autostart_failed, &[&e.to_string()]), true);
+                }
+            }
+            ui.set_autostart(app.settings.autostart);
+        }
+    });
+
+    ui.on_set_auto_connect({
+        let app = app.clone();
+        move |on| {
+            let mut app = app.borrow_mut();
+            app.settings.auto_connect = on;
+            let _ = app.settings.save();
+        }
+    });
+
+    ui.on_set_notifications({
+        let app = app.clone();
+        move |on| {
+            let mut app = app.borrow_mut();
+            app.settings.notifications = on;
+            let _ = app.settings.save();
         }
     });
 
@@ -175,6 +460,35 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    // Arrow keys walk the visible rows, which the filtered list owns, not the UI.
+    ui.on_move_selection({
+        let ui_weak = ui.as_weak();
+        let app = app.clone();
+        move |delta| {
+            let ui = ui_weak.unwrap();
+            let app = app.borrow();
+            let needle = app.query.trim().to_lowercase();
+            let visible: Vec<usize> = app
+                .store
+                .profiles
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| needle.is_empty() || p.name.to_lowercase().contains(&needle))
+                .map(|(index, _)| index)
+                .collect();
+            if visible.is_empty() {
+                return;
+            }
+            let current = visible.iter().position(|index| *index as i32 == ui.get_selected());
+            let next = match current {
+                Some(position) => (position as i32 + delta).clamp(0, visible.len() as i32 - 1) as usize,
+                None => 0,
+            };
+            ui.set_selected(visible[next] as i32);
+            update_card_name(&ui, &app);
+        }
+    });
+
     ui.on_request_remove({
         let ui_weak = ui.as_weak();
         let app = app.clone();
@@ -189,45 +503,64 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
-    // arboard serves the copied text for as long as the clipboard object lives.
-    let clipboard = Rc::new(RefCell::new(None::<arboard::Clipboard>));
-    log_window.on_copy_all({
-        let log_model = log_model.clone();
-        move || {
-            let mut clipboard = clipboard.borrow_mut();
-            if clipboard.is_none() {
-                *clipboard = arboard::Clipboard::new().ok();
-            }
-            if let Some(clipboard) = clipboard.as_mut() {
-                let _ = clipboard.set_text(log_text(&log_model));
-            }
-        }
-    });
-
-    // File dialogs run async so the event loop keeps going while they're open.
-    log_window.on_save({
-        let log_model = log_model.clone();
+    ui.on_request_rename({
+        let ui_weak = ui.as_weak();
         let app = app.clone();
-        let saving = Rc::new(Cell::new(false));
-        move || {
-            if saving.replace(true) {
-                return;
-            }
-            let title = Strings::new(app.borrow().settings.lang()).save_log_title;
-            let (log_model, saving) = (log_model.clone(), saving.clone());
-            let _ = slint::spawn_local(async move {
-                let file = rfd::AsyncFileDialog::new().set_title(title).set_file_name("vpndeck.log").save_file().await;
-                saving.set(false);
-                if let Some(file) = file {
-                    let _ = std::fs::write(file.path(), log_text(&log_model));
-                }
-            });
+        move |i| {
+            let ui = ui_weak.unwrap();
+            let app = app.borrow();
+            let Some(profile) = app.store.profiles.get(i as usize) else { return };
+            ui.set_rename_index(i);
+            ui.set_rename_name(profile.name.as_str().into());
+            ui.set_rename_error("".into());
+            ui.set_rename_visible(true);
         }
     });
 
-    log_window.on_clear({
-        let log_model = log_model.clone();
-        move || log_model.set_vec(Vec::new())
+    ui.on_rename_profile({
+        let ui_weak = ui.as_weak();
+        let app = app.clone();
+        let profile_model = profile_model.clone();
+        move |i, name| {
+            let ui = ui_weak.unwrap();
+            let mut app = app.borrow_mut();
+            let t = Strings::new(app.settings.lang());
+            match app.store.rename(i as usize, &name) {
+                Ok(()) => {
+                    ui.set_rename_visible(false);
+                    sync_profiles(&ui, &app.store, &profile_model, &app.query);
+                    update_card_name(&ui, &app);
+                }
+                Err(profiles::RenameError::Empty) => ui.set_rename_error(t.rename_empty.into()),
+                Err(profiles::RenameError::Taken) => ui.set_rename_error(t.rename_taken.into()),
+                Err(profiles::RenameError::Save(e)) => ui.set_rename_error(e.into()),
+            }
+        }
+    });
+
+    ui.on_view_profile({
+        let profile_window = profile_window.clone();
+        let app = app.clone();
+        let line_model = profile_line_model.clone();
+        move |index| {
+            let Some(window) = profile_window.open() else { return };
+            // The borrow ends before the window is touched: showing it can run
+            // bindings that call back into the app.
+            let (name, remote, text) = {
+                let mut app = app.borrow_mut();
+                let Some(profile) = app.store.profiles.get(index as usize).cloned() else { return };
+                app.viewing = Some(index as usize);
+                let text = std::fs::read_to_string(&profile.file).unwrap_or_default();
+                (profile.name, profile.remote, text)
+            };
+            window.set_profile_name(name.as_str().into());
+            window.set_profile_remote(remote.as_str().into());
+            window.set_has_risky(!profiles::risky_directives(&text).is_empty());
+            window.set_checking(false);
+            window.set_checks(ModelRc::from(Rc::new(VecModel::<CheckLine>::default())));
+            line_model.set_vec(profile_lines(&text));
+            let _ = window.show();
+        }
     });
 
     ui.on_import_profile({
@@ -253,29 +586,93 @@ fn main() -> Result<(), slint::PlatformError> {
                     return;
                 }
                 let paths: Vec<PathBuf> = files.iter().map(|file| file.path().to_path_buf()).collect();
-                let mut app = app.borrow_mut();
-                let report = app.store.import_many(&paths);
-                let lang = app.settings.lang();
-                let t = Strings::new(lang);
-                let reasons: Vec<String> = report
-                    .skipped
-                    .iter()
-                    .map(|(_, reason)| match reason {
-                        profiles::SkipReason::Duplicate => t.import_duplicate.to_string(),
-                        profiles::SkipReason::NotProfile => t.import_not_ovpn.to_string(),
-                        profiles::SkipReason::Failed(e) => e.clone(),
-                    })
-                    .collect();
-                if !report.imported.is_empty() || !reasons.is_empty() {
-                    let summary = i18n::import_summary(lang, report.imported.len(), &reasons);
-                    set_notice(&ui, summary, report.imported.is_empty());
-                }
-                sync_profiles(&ui, &app.store, &profile_model, &app.query);
-                if let Some(first) = report.imported.first() {
-                    ui.set_selected(*first as i32);
-                }
-                update_card_name(&ui, &app);
+                import_paths(&ui, &mut app.borrow_mut(), &profile_model, &paths);
             });
+        }
+    });
+
+    ui.on_import_clipboard({
+        let ui_weak = ui.as_weak();
+        let app = app.clone();
+        let profile_model = profile_model.clone();
+        let clipboard = clipboard.clone();
+        move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let mut app = app.borrow_mut();
+            let t = Strings::new(app.settings.lang());
+            let text = {
+                let mut clipboard = clipboard.borrow_mut();
+                if clipboard.is_none() {
+                    *clipboard = arboard::Clipboard::new().ok();
+                }
+                clipboard.as_mut().and_then(|clipboard| clipboard.get_text().ok())
+            };
+            let Some(text) = text.filter(|text| !profiles::remote_of(text).is_empty()) else {
+                toast(&ui, &mut app, t.import_clipboard_empty, true);
+                return;
+            };
+            match app.store.import_text("pasted", &text) {
+                Ok(index) => {
+                    sync_profiles(&ui, &app.store, &profile_model, &app.query);
+                    ui.set_selected(index as i32);
+                    update_card_name(&ui, &app);
+                    ui.set_add_visible(false);
+                    let scripts = profiles::risky_directives(&text);
+                    let message = if scripts.is_empty() {
+                        t.import_pasted.to_string()
+                    } else {
+                        i18n::fill(t.import_scripts, &[&scripts.join(", ")])
+                    };
+                    toast(&ui, &mut app, message, !scripts.is_empty());
+                }
+                Err(profiles::SkipReason::Duplicate) => toast(&ui, &mut app, t.import_duplicate, true),
+                Err(profiles::SkipReason::NotProfile) => toast(&ui, &mut app, t.import_not_ovpn, true),
+                Err(profiles::SkipReason::Failed(e)) => toast(&ui, &mut app, e, true),
+            }
+        }
+    });
+
+    ui.on_import_url({
+        let ui_weak = ui.as_weak();
+        let app = app.clone();
+        let tx = tx.clone();
+        move |url| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let mut app = app.borrow_mut();
+            let url = url.to_string();
+            let t = Strings::new(app.settings.lang());
+            if !url.starts_with("https://") {
+                // A profile can carry `up` and `plugin`, which run as root, so it
+                // must not travel over a link anyone on the way can rewrite.
+                let message = if url.starts_with("http://") { t.import_url_needs_https } else { t.import_url_not_profile };
+                toast(&ui, &mut app, message, true);
+                return;
+            }
+            ui.set_add_visible(false);
+            toast(&ui, &mut app, t.downloading_profile, false);
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                let name = name_from_url(&url);
+                let result = fetch_profile(&url);
+                let _ = tx.send(Msg::Fetched { name, result });
+            });
+        }
+    });
+
+    ui.on_files_dropped({
+        let ui_weak = ui.as_weak();
+        let app = app.clone();
+        let profile_model = profile_model.clone();
+        move |data| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let paths: Vec<PathBuf> = data
+                .file_paths()
+                .map(|paths| paths.map(Path::to_path_buf).collect())
+                .unwrap_or_default();
+            if paths.is_empty() {
+                return;
+            }
+            import_paths(&ui, &mut app.borrow_mut(), &profile_model, &paths);
         }
     });
 
@@ -297,7 +694,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 Ok(_) => {}
                 Err(e) => {
                     let t = Strings::new(app.settings.lang());
-                    set_notice(&ui, i18n::fill(t.remove_failed, &[&e.to_string()]), true);
+                    toast(&ui, &mut app, i18n::fill(t.remove_failed, &[&e.to_string()]), true);
                 }
             }
             if let Some(a) = app.active.filter(|a| *a > i) {
@@ -316,6 +713,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui_weak = ui.as_weak();
         let app = app.clone();
         let log_model = log_model.clone();
+        let sample_model = sample_model.clone();
         let tx = tx.clone();
         move |i| {
             let ui = ui_weak.unwrap();
@@ -327,10 +725,16 @@ fn main() -> Result<(), slint::PlatformError> {
             app.session_id += 1;
             let id = app.session_id;
             let tx = tx.clone();
+            app.log_all.clear();
             log_model.set_vec(Vec::new());
+            app.samples.clear();
+            sample_model.set_vec(Vec::new());
+            app.last_bytes = (0, 0);
+            app.last_sample = Instant::now();
+            app.was_connected = false;
             reset_stats(&ui);
             ui.set_status_for(i);
-            match openvpn::Session::start(&profile.file, profile.workdir.as_deref(), move |ev| {
+            match openvpn::Session::start(&profile.file, profile.workdir.as_deref(), profile.saved_password, move |ev| {
                 let _ = tx.send(Msg::Vpn(id, ev));
             }) {
                 Ok(session) => {
@@ -358,10 +762,13 @@ fn main() -> Result<(), slint::PlatformError> {
         let app = app.clone();
         move || {
             let ui = ui_weak.unwrap();
-            if let Some(session) = &app.borrow().session {
+            let mut app = app.borrow_mut();
+            app.was_connected = false;
+            app.retry = None;
+            if let Some(session) = &app.session {
                 session.disconnect();
                 ui.set_conn_state(ConnState::Disconnecting);
-                let t = Strings::new(app.borrow().settings.lang());
+                let t = Strings::new(app.settings.lang());
                 ui.set_status_text(t.disconnecting.into());
             }
         }
@@ -380,7 +787,7 @@ fn main() -> Result<(), slint::PlatformError> {
             // A crtext challenge is answered on its own, without a password prompt.
             if app.cr_challenge.take().is_some() {
                 if let Some(session) = &app.session {
-                    session.send_cr_response(&code);
+                    session.send_cr_response(&clean_code(&code));
                 }
                 let t = Strings::new(app.settings.lang());
                 ui.set_status_text(t.checking_code.into());
@@ -393,11 +800,11 @@ fn main() -> Result<(), slint::PlatformError> {
             let typed_password = from_keyring.is_none();
             let username = match &from_keyring {
                 Some(_) => app.active.and_then(|a| app.store.profiles.get(a)).map(|p| p.username.clone()).unwrap_or_default(),
-                None => username.to_string(),
+                None => username.trim().to_string(),
             };
             let password = from_keyring.unwrap_or_else(|| password.to_string());
             if let Some(session) = &app.session {
-                session.send_auth(&req, &username, &password, &code);
+                session.send_auth(&req, &username, &password, &clean_code(&code));
             }
             let saved = app.active.and_then(|a| app.store.profiles.get(a)).filter(|p| p.saved_password).map(|p| p.file.clone());
             if typed_password {
@@ -407,11 +814,15 @@ fn main() -> Result<(), slint::PlatformError> {
                     forget_password(&app.tx, file);
                 }
             }
+            let mut renamed = false;
             if req.needs_username
                 && let Some(profile) = app.active.and_then(|a| app.store.profiles.get_mut(a))
                 && profile.username != username
             {
                 profile.username = username;
+                renamed = true;
+            }
+            if renamed {
                 let _ = app.store.save();
             }
             let t = Strings::new(app.settings.lang());
@@ -453,6 +864,8 @@ fn main() -> Result<(), slint::PlatformError> {
             app.auth = None;
             app.saved_password = None;
             app.cr_challenge = None;
+            app.was_connected = false;
+            app.retry = None;
             if let Some(session) = &app.session {
                 session.disconnect();
                 ui.set_conn_state(ConnState::Disconnecting);
@@ -531,12 +944,21 @@ fn main() -> Result<(), slint::PlatformError> {
         move || ui_weak.unwrap().set_update_state(UpdateState::Idle)
     });
 
-    // With a tray icon, closing the window keeps vpndeck (and the tunnel) running.
+    // With a tray icon, closing the window keeps Ether (and the tunnel) running.
     ui.window().on_close_requested({
+        let ui_weak = ui.as_weak();
         let app = app.clone();
         move || {
-            if app.borrow().tray.is_none() {
+            let ui = ui_weak.unwrap();
+            let mut app = app.borrow_mut();
+            save_window_size(&ui, &mut app);
+            if app.tray.is_none() {
                 let _ = slint::quit_event_loop();
+            } else if !app.tray_hint_shown {
+                app.tray_hint_shown = true;
+                if app.settings.notifications {
+                    notify::send(Strings::new(app.settings.lang()).notify_tray, "");
+                }
             }
             CloseRequestResponse::HideWindow
         }
@@ -545,19 +967,22 @@ fn main() -> Result<(), slint::PlatformError> {
     let timer = slint::Timer::default();
     timer.start(slint::TimerMode::Repeated, Duration::from_millis(100), {
         let ui_weak = ui.as_weak();
-        let log_weak = log_window.as_weak();
+        let log_window = log_window.clone();
         let app = app.clone();
         let log_model = log_model.clone();
+        let sample_model = sample_model.clone();
         let profile_model = profile_model.clone();
         move || {
             let ui = ui_weak.unwrap();
-            let log_window = log_weak.unwrap();
+            // Only an already opened log window is updated: building it here
+            // would bring back the empty window this change removes.
+            let log = log_window.opened();
             while let Ok(msg) = rx.try_recv() {
                 match msg {
                     Msg::Vpn(id, event) => {
                         let mut app = app.borrow_mut();
                         if id == app.session_id {
-                            handle_event(&ui, &log_window, &mut app, &log_model, event);
+                            handle_event(&ui, log.as_ref(), &mut app, &log_model, &sample_model, event);
                         }
                     }
                     // Run through the UI's own callbacks, which borrow `app` themselves.
@@ -583,32 +1008,89 @@ fn main() -> Result<(), slint::PlatformError> {
                             Err(e) => {
                                 let t = Strings::new(app.settings.lang());
                                 let template = if saved { t.keyring_save_failed } else { t.keyring_forget_failed };
-                                set_notice(&ui, i18n::fill(template, &[&e.to_string()]), true);
+                                toast(&ui, &mut app, i18n::fill(template, &[&e.to_string()]), true);
                             }
+                        }
+                    }
+                    Msg::Fetched { name, result } => {
+                        let mut app = app.borrow_mut();
+                        let t = Strings::new(app.settings.lang());
+                        match result {
+                            Ok(text) if !profiles::remote_of(&text).is_empty() => match app.store.import_text(&name, &text) {
+                                Ok(index) => {
+                                    sync_profiles(&ui, &app.store, &profile_model, &app.query);
+                                    ui.set_selected(index as i32);
+                                    update_card_name(&ui, &app);
+                                    let scripts = profiles::risky_directives(&text);
+                                    let message = if scripts.is_empty() {
+                                        i18n::import_summary(app.settings.lang(), 1, &[])
+                                    } else {
+                                        i18n::fill(t.import_scripts, &[&scripts.join(", ")])
+                                    };
+                                    toast(&ui, &mut app, message, !scripts.is_empty());
+                                }
+                                Err(profiles::SkipReason::Duplicate) => toast(&ui, &mut app, t.import_duplicate, true),
+                                Err(profiles::SkipReason::NotProfile) => toast(&ui, &mut app, t.import_not_ovpn, true),
+                                Err(profiles::SkipReason::Failed(e)) => toast(&ui, &mut app, e, true),
+                            },
+                            Ok(_) => toast(&ui, &mut app, t.import_url_not_profile, true),
+                            Err(e) => toast(&ui, &mut app, i18n::fill(t.import_url_failed, &[&e]), true),
                         }
                     }
                 }
             }
-            let mut app = app.borrow_mut();
-            if let Some(since) = app.connected_at {
-                ui.set_duration(format_duration(since.elapsed()).into());
+            {
+                let mut app = app.borrow_mut();
+                if let Some(since) = app.connected_at {
+                    ui.set_duration(format_duration(since.elapsed()).into());
+                }
+                if app.toast_until.is_some_and(|until| Instant::now() >= until) {
+                    app.toast_until = None;
+                    ui.set_toast("".into());
+                }
             }
-            sync_tray(&ui, &mut app);
+            // A retry calls back into the UI, which borrows `app` itself, so the
+            // decision is made and the borrow released first.
+            let retry = {
+                let mut app = app.borrow_mut();
+                match app.retry {
+                    Some((at, attempt)) if Instant::now() >= at => {
+                        app.retry = None;
+                        app.retry_profile.map(|index| (index, attempt))
+                    }
+                    _ => None,
+                }
+            };
+            if let Some((index, attempt)) = retry {
+                let t = Strings::new(app.borrow().settings.lang());
+                let text = i18n::fill(t.reconnecting_attempt, &[&attempt.to_string(), &MAX_RECONNECTS.to_string()]);
+                ui.set_status_text(text.into());
+                ui.invoke_connect(index as i32);
+            }
+            sync_tray(&ui, &mut app.borrow_mut());
         }
     });
 
     ui.show()?;
     check_for_updates(tx.clone(), true);
+    // "Connect on launch" waits for the window, so the prompt has somewhere to appear.
+    let auto_connect = app.borrow().settings.auto_connect;
+    let last_used = app.borrow().store.last_used();
+    if auto_connect && let Some(index) = last_used {
+        ui.set_selected(index as i32);
+        ui.invoke_connect(index as i32);
+    }
     slint::run_event_loop_until_quit()?;
 
-    // Nothing is left to control the tunnel once vpndeck exits, so take it down.
+    // Nothing is left to control the tunnel once Ether exits, so take it down.
     if let Some(session) = &app.borrow().session {
         session.disconnect();
     }
+    save_window_size(&ui, &mut app.borrow_mut());
     Ok(())
 }
 
-/// Whether vpndeck runs inside a Flatpak sandbox, where host programs and
+/// Whether Ether runs inside a Flatpak sandbox, where host programs and
 /// files have to be reached through `flatpak-spawn --host` and /run/host.
 pub fn sandboxed() -> bool {
     std::env::var_os("FLATPAK_ID").is_some()
@@ -617,6 +1099,31 @@ pub fn sandboxed() -> bool {
 /// Switches the app's palette. The widgets are the app's own, so this is all it takes.
 fn apply_theme(ui: &AppWindow, dark: bool) {
     ui.global::<Theme>().set_dark(dark);
+}
+
+/// Pushes the settings the settings dialog shows.
+fn sync_settings(ui: &AppWindow, app: &App) {
+    ui.set_theme_mode(app.settings.theme_mode().into());
+    ui.set_autostart(app.settings.autostart);
+    ui.set_auto_connect(app.settings.auto_connect);
+    ui.set_notifications(app.settings.notifications);
+}
+
+fn save_window_size(ui: &AppWindow, app: &mut App) {
+    let size = ui.window().size();
+    let scale = ui.window().scale_factor();
+    if scale <= 0.0 {
+        return;
+    }
+    let width = (size.width as f32 / scale).round() as u32;
+    let height = (size.height as f32 / scale).round() as u32;
+    if width == 0 || height == 0 {
+        return;
+    }
+    if app.settings.window_size() != Some((width, height)) {
+        app.settings.set_window_size(width, height);
+        let _ = app.settings.save();
+    }
 }
 
 fn check_for_updates(tx: mpsc::Sender<Msg>, silent: bool) {
@@ -724,6 +1231,7 @@ fn sync_tray(ui: &AppWindow, app: &mut App) {
         UpdateState::Available => app.release.as_ref().map(|r| r.version.clone()),
         _ => None,
     };
+    let last = app.store.last_used().and_then(|i| app.store.profiles.get(i).map(|p| (i, p.name.clone())));
     let state = tray::State {
         status,
         status_text,
@@ -731,6 +1239,7 @@ fn sync_tray(ui: &AppWindow, app: &mut App) {
         busy,
         update,
         lang,
+        last,
     };
     if state != app.tray_state {
         tray::set_state(handle, state.clone());
@@ -738,16 +1247,32 @@ fn sync_tray(ui: &AppWindow, app: &mut App) {
     }
 }
 
-fn handle_event(ui: &AppWindow, log_window: &LogWindow, app: &mut App, log_model: &VecModel<SharedString>, event: openvpn::Event) {
+fn handle_event(
+    ui: &AppWindow,
+    log_window: Option<&LogWindow>,
+    app: &mut App,
+    log_model: &VecModel<LogLine>,
+    sample_model: &VecModel<f32>,
+    event: openvpn::Event,
+) {
     use openvpn::Event;
     let t = Strings::new(app.settings.lang());
     match event {
         Event::Log(line) => {
-            if log_model.row_count() >= MAX_LOG_LINES {
-                log_model.remove(0);
+            let level = log_level(&line);
+            app.log_all.push(LogLine { text: line.as_str().into(), level });
+            if app.log_all.len() > MAX_LOG_LINES {
+                app.log_all.remove(0);
             }
-            log_model.push(line.into());
-            log_window.set_count(log_window.get_count() + 1);
+            if matches_filter(&line, &app.log_filter) {
+                if log_model.row_count() >= MAX_LOG_LINES {
+                    log_model.remove(0);
+                }
+                log_model.push(LogLine { text: line.as_str().into(), level });
+            }
+            if let Some(log_window) = log_window {
+                log_window.set_count(log_window.get_count() + 1);
+            }
         }
         Event::State { name, local_ip, remote } => {
             if !local_ip.is_empty() {
@@ -762,9 +1287,19 @@ fn handle_event(ui: &AppWindow, log_window: &LogWindow, app: &mut App, log_model
             let (state, text) = match name.as_str() {
                 "CONNECTED" => {
                     app.connected_at.get_or_insert_with(Instant::now);
+                    app.was_connected = true;
+                    app.retry = None;
                     let file = app.active.and_then(|a| app.store.profiles.get(a)).map(|p| p.file.clone());
                     if let Some(file) = file {
-                        save_passwords(&app.tx, file, std::mem::take(&mut app.pending_save));
+                        let tx = app.tx.clone();
+                        save_passwords(&tx, file, std::mem::take(&mut app.pending_save));
+                    }
+                    if let Some(index) = app.active {
+                        app.store.touch(index);
+                    }
+                    if app.settings.notifications {
+                        let name = app.active.and_then(|a| app.store.profiles.get(a)).map(|p| p.name.clone()).unwrap_or_default();
+                        notify::send(i18n::fill(t.notify_connected, &[&name]), "");
                     }
                     (ConnState::Connected, t.state_connected.to_string())
                 }
@@ -781,6 +1316,7 @@ fn handle_event(ui: &AppWindow, log_window: &LogWindow, app: &mut App, log_model
         Event::Bytes { rx, tx } => {
             ui.set_rx(format_bytes(rx).into());
             ui.set_tx(format_bytes(tx).into());
+            push_sample(app, sample_model, rx);
         }
         Event::NeedAuth(req) => {
             let profile = app.active.and_then(|a| app.store.profiles.get(a));
@@ -814,27 +1350,119 @@ fn handle_event(ui: &AppWindow, log_window: &LogWindow, app: &mut App, log_model
             app.pending_save.clear();
         }
         Event::Exited(error) => {
+            let was_active = app.active;
+            let dropped = app.was_connected;
             app.session = None;
             app.active = None;
             app.connected_at = None;
             app.auth = None;
             app.saved_password = None;
             app.cr_challenge = None;
+            app.was_connected = false;
             ui.set_active(-1);
             ui.set_auth_visible(false);
             reset_stats(ui);
             match error {
                 Some(message) => {
                     ui.set_conn_state(ConnState::Error);
-                    ui.set_status_text(message.into());
+                    ui.set_status_text(message.clone().into());
+                    if app.settings.notifications {
+                        notify::send(i18n::fill(t.notify_failed, &[&message]), "");
+                    }
+                    // A tunnel that was up and then died is worth another try.
+                    if dropped {
+                        let attempt = app.retry.map_or(1, |(_, attempt)| attempt + 1);
+                        if attempt <= MAX_RECONNECTS {
+                            app.retry = Some((Instant::now() + RECONNECT_DELAY, attempt));
+                            app.retry_profile = was_active;
+                        } else {
+                            app.retry = None;
+                            toast(ui, app, t.reconnect_gave_up, true);
+                        }
+                    }
                 }
                 None => {
                     ui.set_conn_state(ConnState::Idle);
                     ui.set_status_text(t.state_idle.into());
+                    if app.settings.notifications {
+                        notify::send(t.notify_disconnected, "");
+                    }
                 }
             }
         }
     }
+}
+
+/// Keeps the sparkline fed: one sample per bytecount message, scaled to the
+/// busiest sample in the window so the shape is readable at any speed.
+fn push_sample(app: &mut App, model: &VecModel<f32>, rx: u64) {
+    let now = Instant::now();
+    let seconds = now.duration_since(app.last_sample).as_secs_f32().max(0.1);
+    let rate = rx.saturating_sub(app.last_bytes.0) as f32 / seconds;
+    app.last_bytes = (rx, app.last_bytes.1);
+    app.last_sample = now;
+    app.samples.push(rate);
+    if app.samples.len() > MAX_SAMPLES {
+        app.samples.remove(0);
+    }
+    let peak = app.samples.iter().copied().fold(0.0f32, f32::max).max(1.0);
+    let scaled: Vec<f32> = app.samples.iter().map(|sample| sample / peak).collect();
+    model.set_vec(scaled);
+}
+
+/// 0 for ordinary output, 1 for warnings, 2 for errors.
+fn log_level(line: &str) -> i32 {
+    if line.contains("ERROR") || line.contains("FATAL") {
+        2
+    } else if line.contains("WARNING") || line.contains("WARN") {
+        1
+    } else {
+        0
+    }
+}
+
+fn matches_filter(line: &str, filter: &str) -> bool {
+    filter.is_empty() || line.to_lowercase().contains(&filter.to_lowercase())
+}
+
+fn rebuild_log(log_window: &LogWindow, model: &VecModel<LogLine>, app: &App) {
+    let rows: Vec<LogLine> = app
+        .log_all
+        .iter()
+        .filter(|line| matches_filter(&line.text, &app.log_filter))
+        .cloned()
+        .collect();
+    model.set_vec(rows);
+    log_window.set_count(log_window.get_count() + 1);
+}
+
+/// Imports files picked in the dialog or dropped onto the window.
+fn import_paths(ui: &AppWindow, app: &mut App, model: &VecModel<ProfileInfo>, paths: &[PathBuf]) {
+    let report = app.store.import_many(paths);
+    let lang = app.settings.lang();
+    let t = Strings::new(lang);
+    let reasons: Vec<String> = report
+        .skipped
+        .iter()
+        .map(|(_, reason)| match reason {
+            profiles::SkipReason::Duplicate => t.import_duplicate.to_string(),
+            profiles::SkipReason::NotProfile => t.import_not_ovpn.to_string(),
+            profiles::SkipReason::Failed(e) => e.clone(),
+        })
+        .collect();
+    if !report.imported.is_empty() || !reasons.is_empty() {
+        let mut summary = i18n::import_summary(lang, report.imported.len(), &reasons);
+        if !report.scripts.is_empty() {
+            summary.push(' ');
+            summary.push_str(&i18n::fill(t.import_scripts, &[&report.scripts.join(", ")]));
+        }
+        toast(ui, app, summary, report.imported.is_empty() || !report.scripts.is_empty());
+    }
+    sync_profiles(ui, &app.store, model, &app.query);
+    if let Some(first) = report.imported.first() {
+        ui.set_selected(*first as i32);
+    }
+    update_card_name(ui, app);
 }
 
 fn show_auth_dialog(ui: &AppWindow, app: &mut App, req: openvpn::AuthRequest, error: &str) {
@@ -942,37 +1570,169 @@ fn sync_profiles(ui: &AppWindow, store: &profiles::Store, model: &VecModel<Profi
         .iter()
         .enumerate()
         .filter(|(_, p)| needle.is_empty() || p.name.to_lowercase().contains(&needle))
-        .map(|(index, p)| ProfileInfo { index: index as i32, name: p.name.as_str().into(), saved_password: p.saved_password })
+        .map(|(index, p)| ProfileInfo {
+            index: index as i32,
+            name: p.name.as_str().into(),
+            saved_password: p.saved_password,
+            remote: p.remote.as_str().into(),
+            initials: initials(&p.name).into(),
+        })
         .collect();
     model.set_vec(rows);
     ui.set_profile_count(store.profiles.len() as i32);
 }
 
-/// Keeps the status card's profile name in step with the selection.
+/// One or two letters for the row's avatar: "Work laptop" becomes "WL".
+fn initials(name: &str) -> String {
+    let mut words = name.split_whitespace().filter_map(|word| word.chars().next());
+    let first = words.next().unwrap_or('?');
+    match words.next() {
+        Some(second) => format!("{first}{second}").to_uppercase(),
+        None => first.to_uppercase().to_string(),
+    }
+}
+
+/// Keeps the status card's profile name and server in step with the selection.
 fn update_card_name(ui: &AppWindow, app: &App) {
     let index = if ui.get_active() >= 0 { ui.get_active() } else { ui.get_selected() };
-    let name = usize::try_from(index)
+    let profile = usize::try_from(index).ok().and_then(|i| app.store.profiles.get(i));
+    ui.set_card_name(profile.map(|p| p.name.as_str()).unwrap_or("").into());
+    ui.set_card_remote(profile.map(|p| p.remote.as_str()).unwrap_or("").into());
+}
+
+/// Shows a message over the window for a few seconds.
+fn toast(ui: &AppWindow, app: &mut App, text: impl Into<SharedString>, error: bool) {
+    ui.set_toast(text.into());
+    ui.set_toast_error(error);
+    let time = if error { TOAST_ERROR_TIME } else { TOAST_TIME };
+    app.toast_until = Some(Instant::now() + time);
+}
+
+/// Splits a profile into numbered lines, marking the ones that run a program.
+fn profile_lines(text: &str) -> Vec<ProfileLine> {
+    let risky = profiles::risky_directives(text);
+    text.lines()
+        .enumerate()
+        .map(|(i, line)| {
+            let word = line.split_whitespace().next().unwrap_or("");
+            ProfileLine {
+                number: (i + 1) as i32,
+                text: line.into(),
+                risky: risky.iter().any(|d| d == word),
+            }
+        })
+        .collect()
+}
+
+/// Turns one pre-connect check into a row the profile window can show.
+fn check_line(check: &preflight::Check, t: &Strings) -> CheckLine {
+    let label = match check.kind {
+        preflight::Kind::File => t.check_file,
+        preflight::Kind::Remote => t.check_remote,
+        preflight::Kind::Files => t.check_files,
+        preflight::Kind::Dns => t.check_dns,
+        preflight::Kind::Port => t.check_port,
+    };
+    let (state, detail) = match &check.outcome {
+        preflight::Outcome::Passed => (0, t.check_passed.to_string()),
+        preflight::Outcome::Skipped(_) => (2, t.check_udp_skipped.to_string()),
+        preflight::Outcome::Failed(detail) if detail.is_empty() => {
+            let detail = match check.kind {
+                preflight::Kind::Remote => t.check_remote_missing,
+                _ => t.check_failed,
+            };
+            (1, detail.to_string())
+        }
+        preflight::Outcome::Failed(detail) => (1, detail.clone()),
+    };
+    CheckLine { label: label.into(), detail: detail.into(), state }
+}
+
+fn log_text(lines: &[LogLine]) -> String {
+    lines.iter().map(|line| format!("{}\n", line.text)).collect()
+}
+
+/// The block the "Copy diagnostics" button puts on the clipboard.
+fn diagnostics(app: &App) -> String {
+    let profile = app.active.and_then(|i| app.store.profiles.get(i));
+    let mut out = String::new();
+    out.push_str(&format!("Ether {}\n", updater::current_version()));
+    out.push_str(&format!("OS: {}\n", os_release()));
+    out.push_str(&format!("OpenVPN: {}\n", openvpn_version()));
+    if let Some(profile) = profile {
+        out.push_str(&format!("Profile: {} ({})\n", profile.name, profile.remote));
+    }
+    out.push_str(&format!("Profiles: {}\n", app.store.profiles.len()));
+    out.push_str("---\n");
+    let start = app.log_all.len().saturating_sub(50);
+    for line in &app.log_all[start..] {
+        out.push_str(&line.text);
+        out.push('\n');
+    }
+    out
+}
+
+fn os_release() -> String {
+    std::fs::read_to_string("/etc/os-release")
         .ok()
-        .and_then(|i| app.store.profiles.get(i))
-        .map(|p| p.name.as_str())
-        .unwrap_or("");
-    ui.set_card_name(name.into());
+        .and_then(|text| {
+            text.lines()
+                .find_map(|line| line.strip_prefix("PRETTY_NAME=").map(|name| name.trim_matches('"').to_string()))
+        })
+        .unwrap_or_else(|| std::env::consts::OS.to_string())
 }
 
-/// Shows a message under the profile list, coloured by whether it reports a failure.
-fn set_notice(ui: &AppWindow, text: impl Into<SharedString>, error: bool) {
-    ui.set_notice(text.into());
-    ui.set_notice_error(error);
+fn openvpn_version() -> String {
+    let program = ["/usr/sbin/openvpn", "/usr/bin/openvpn"].into_iter().find(|path| Path::new(path).exists());
+    let Some(program) = program else { return "not installed".to_string() };
+    std::process::Command::new(program)
+        .arg("--version")
+        .output()
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|text| text.lines().next().map(str::to_string))
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
-fn log_text(model: &VecModel<SharedString>) -> String {
-    model.iter().map(|line| format!("{line}\n")).collect()
+/// Downloads a profile from a link, with the same limits as any other text file.
+fn fetch_profile(url: &str) -> Result<String, String> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(20)))
+        .build()
+        .into();
+    let mut response = agent
+        .get(url)
+        .header("User-Agent", format!("ether-ovpn/{}", updater::current_version()))
+        .call()
+        .map_err(|e| e.to_string())?;
+    response
+        .body_mut()
+        .with_config()
+        .limit(MAX_PROFILE_BYTES)
+        .read_to_string()
+        .map_err(|e| e.to_string())
+}
+
+/// The last path segment of a link, without a profile extension.
+fn name_from_url(url: &str) -> String {
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    let last = path.trim_end_matches('/').rsplit('/').next().unwrap_or("profile");
+    // Only a profile extension is dropped: "example.com" is a host, not a name.
+    let stem = last.strip_suffix(".ovpn").or_else(|| last.strip_suffix(".conf")).unwrap_or(last);
+    if stem.is_empty() { "profile".to_string() } else { stem.to_string() }
+}
+
+/// 2FA codes are often pasted with spaces or a stray newline.
+fn clean_code(code: &str) -> String {
+    code.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
 fn reset_stats(ui: &AppWindow) {
-    for set in [AppWindow::set_local_ip, AppWindow::set_remote, AppWindow::set_rx, AppWindow::set_tx, AppWindow::set_duration] {
-        set(ui, "—".into());
-    }
+    ui.set_local_ip("—".into());
+    ui.set_remote("—".into());
+    ui.set_rx("—".into());
+    ui.set_tx("—".into());
+    ui.set_duration("—".into());
 }
 
 fn format_bytes(n: u64) -> String {
@@ -989,4 +1749,61 @@ fn format_bytes(n: u64) -> String {
 fn format_duration(d: Duration) -> String {
     let s = d.as_secs();
     format!("{:02}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builds_initials_from_the_name() {
+        assert_eq!(initials("Work laptop"), "WL");
+        assert_eq!(initials("office"), "O");
+        assert_eq!(initials("  home   server  "), "HS");
+        assert_eq!(initials(""), "?");
+        // Non-ASCII names keep their own letters.
+        assert_eq!(initials("офис"), "О");
+    }
+
+    #[test]
+    fn names_a_downloaded_profile_after_its_link() {
+        assert_eq!(name_from_url("https://example.com/files/work.ovpn"), "work");
+        assert_eq!(name_from_url("https://example.com/files/work.ovpn?token=1"), "work");
+        assert_eq!(name_from_url("https://example.com/files/"), "files");
+        assert_eq!(name_from_url("https://example.com"), "example.com");
+        assert_eq!(name_from_url("https://example.com/"), "example.com");
+    }
+
+    #[test]
+    fn strips_whitespace_from_a_2fa_code() {
+        assert_eq!(clean_code(" 123 456\n"), "123456");
+        assert_eq!(clean_code("123456"), "123456");
+        assert_eq!(clean_code(""), "");
+    }
+
+    #[test]
+    fn marks_warnings_and_errors_in_the_log() {
+        assert_eq!(log_level("2025-01-01 WARNING: bad option"), 1);
+        assert_eq!(log_level("2025-01-01 ERROR: cannot open"), 2);
+        assert_eq!(log_level("2025-01-01 FATAL: exiting"), 2);
+        assert_eq!(log_level("2025-01-01 Initialization Sequence Completed"), 0);
+    }
+
+    #[test]
+    fn filters_the_log_case_insensitively() {
+        assert!(matches_filter("TLS Error: handshake failed", ""));
+        assert!(matches_filter("TLS Error: handshake failed", "tls"));
+        assert!(matches_filter("TLS Error: handshake failed", "HANDSHAKE"));
+        assert!(!matches_filter("TLS Error: handshake failed", "dns"));
+    }
+
+    #[test]
+    fn formats_traffic_and_time() {
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(999), "999 B");
+        assert_eq!(format_bytes(1536), "1.5 KB");
+        assert_eq!(format_bytes(5 * 1024 * 1024), "5.0 MB");
+        assert_eq!(format_duration(Duration::from_secs(0)), "00:00:00");
+        assert_eq!(format_duration(Duration::from_secs(3661)), "01:01:01");
+    }
 }

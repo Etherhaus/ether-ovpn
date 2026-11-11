@@ -1283,6 +1283,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b5343afd4a8365a643ac588dab4cf234a190c7f6c88c9f6dd6ffe00837661b7"
 
 [[package]]
+name = "ether-ovpn"
+version = "0.3.0"
+dependencies = [
+ "arboard",
+ "dirs",
+ "flate2",
+ "keyring",
+ "ksni",
+ "minisign-verify",
+ "resvg 0.49.0",
+ "rfd",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "slint",
+ "slint-build",
+ "tar",
+ "ureq",
+ "zbus 5.19.0",
+]
+
+[[package]]
 name = "euclid"
 version = "0.22.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2918,6 +2940,12 @@ name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
+
+[[package]]
+name = "minisign-verify"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "871285dc19d8d0ebe0eef3d0e99a205f2a71363b122632cbbfa4a6c370a960ce"
 
 [[package]]
 name = "miniz_oxide"
@@ -5399,26 +5427,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "vpndeck"
-version = "0.2.0"
-dependencies = [
- "arboard",
- "dirs",
- "flate2",
- "keyring",
- "ksni",
- "resvg 0.49.0",
- "rfd",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "slint",
- "slint-build",
- "tar",
- "ureq",
-]
 
 [[package]]
 name = "vtable"

@@ -65,6 +65,7 @@ impl Session {
     pub fn start(
         config: &Path,
         workdir: Option<&Path>,
+        saved_password: bool,
         emit: impl Fn(Event) + Send + Sync + 'static,
     ) -> io::Result<Session> {
         let emit: Emit = Arc::new(emit);
@@ -107,6 +108,15 @@ impl Session {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // The log is the main diagnostic tool, so keep it informative whatever
+        // the profile asks for. Later options win, so this overrides `verb`.
+        cmd.args(["--verb", "3"]);
+        if saved_password {
+            // The keyring can hand the password over again, so openvpn doesn't
+            // have to keep it in memory across renegotiations. Without a saved
+            // password this would turn every renegotiation into a new prompt.
+            cmd.arg("--auth-nocache");
+        }
         let mut child = cmd.spawn().map_err(|e| {
             let _ = fs::remove_file(&pw_file);
             io::Error::new(e.kind(), format!("could not run pkexec: {e}"))
@@ -449,13 +459,32 @@ fn write_secret(port: u16, secret: &str) -> io::Result<PathBuf> {
     if let Ok(app_id) = std::env::var("FLATPAK_ID") {
         dir = dir.join("app").join(app_id);
     }
-    let dir = dir.join("vpndeck");
-    fs::create_dir_all(&dir)?;
-    fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
+    let dir = private_dir(&dir.join("ether"))?;
     let path = dir.join(format!("mgmt-{port}.pw"));
     let mut f = OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&path)?;
     writeln!(f, "{secret}")?;
     Ok(path)
+}
+
+/// Creates `dir` with mode 0700, refusing anything that isn't a real folder.
+///
+/// The fallback when XDG_RUNTIME_DIR is unset is a shared temporary folder, so a
+/// symlink planted there would otherwise hand the management password to another
+/// local user. `set_permissions` also fails if the folder belongs to someone else.
+fn private_dir(dir: &Path) -> io::Result<PathBuf> {
+    match fs::create_dir(dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(e),
+    }
+    if !fs::symlink_metadata(dir)?.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("{} isn't a folder", dir.display()),
+        ));
+    }
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+    Ok(dir.to_path_buf())
 }
 
 #[cfg(test)]

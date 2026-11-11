@@ -1,4 +1,4 @@
-//! Checks GitHub for a newer vpndeck release, and downloads and installs it.
+//! Checks GitHub for a newer Ether release, and downloads and installs it.
 //!
 //! A standalone binary (release tarball) is replaced in place, the .deb and
 //! .rpm are installed through apt, dnf or zypper (asking for the admin
@@ -16,6 +16,18 @@ use sha2::{Digest, Sha256};
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
 const CHECKSUMS: &str = "SHA256SUMS";
+/// The minisign public key releases are signed with, base64 as printed in the
+/// `.pub` file. While it is empty, releases aren't signed and the download is
+/// only checked against SHA256SUMS, which proves nothing about who built it.
+/// Fill it in with `packaging/sign-release.sh` output to turn signing on.
+const PUBLIC_KEY: &str = "";
+const SIGNATURE_SUFFIX: &str = ".minisig";
+/// Caps on what a response may cost us, so a hostile or broken server can't
+/// exhaust memory or fill the disk.
+const MAX_JSON: u64 = 1024 * 1024;
+const MAX_SUMS: u64 = 64 * 1024;
+const MAX_SIGNATURE: u64 = 8 * 1024;
+const MAX_DOWNLOAD: u64 = 512 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum UpdateStatus {
@@ -59,7 +71,7 @@ fn check() -> Result<UpdateStatus, String> {
         .into();
     let mut response = agent
         .get(format!("https://api.github.com/repos/{repo}/releases/latest"))
-        .header("User-Agent", format!("vpndeck/{CURRENT}"))
+        .header("User-Agent", format!("ether-ovpn/{CURRENT}"))
         .header("Accept", "application/vnd.github+json")
         .call()
         .map_err(|e| format!("Couldn't reach GitHub: {e}"))?;
@@ -68,7 +80,7 @@ fn check() -> Result<UpdateStatus, String> {
         404 => return Err("No releases have been published yet".to_owned()),
         code => return Err(format!("GitHub answered with HTTP {code}")),
     }
-    let body = response.body_mut().read_to_string().map_err(|e| e.to_string())?;
+    let body = response.body_mut().with_config().limit(MAX_JSON).read_to_string().map_err(|e| e.to_string())?;
     let release: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
     let tag = release["tag_name"].as_str().ok_or("The release has no version tag")?;
     let url = release["html_url"].as_str().unwrap_or(REPOSITORY).to_owned();
@@ -109,10 +121,15 @@ pub fn current_version() -> &'static str {
 
 /// Opens a web page in the default browser.
 pub fn open_url(url: &str) {
+    // The URL comes from the API response, and xdg-open would read a leading
+    // dash as an option, so only a GitHub page is ever handed over.
+    if !url.starts_with("https://github.com/") {
+        return;
+    }
     let _ = Command::new("xdg-open").arg(url).spawn();
 }
 
-/// How this copy of vpndeck was installed, which decides how to update it.
+/// How this copy of Ether was installed, which decides how to update it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Install {
     /// A standalone binary that we replace in place (the release tarball).
@@ -136,7 +153,7 @@ impl Install {
             let user = !info.lines().any(|l| l.starts_with("app-path=/var/lib/flatpak/"));
             return Ok(Self::Flatpak { app_id, user });
         }
-        let exe = std::env::current_exe().map_err(|e| format!("Can't find the VPNdeck program: {e}"))?;
+        let exe = std::env::current_exe().map_err(|e| format!("Can't find the Ether program: {e}"))?;
         if exe.components().any(|c| c.as_os_str() == "target") {
             return Err("This copy was built from source. Update it with git pull and cargo build.".to_owned());
         }
@@ -162,16 +179,16 @@ impl Install {
         matches!(self, Self::Deb | Self::Rpm) || matches!(self, Self::Flatpak { user: false, .. })
     }
 
-    /// Starts the updated copy of vpndeck. The caller then closes this one.
+    /// Starts the updated copy of Ether. The caller then closes this one.
     pub fn relaunch(&self) -> Result<(), String> {
         let result = match self {
             Self::Binary(exe) => Command::new(exe).spawn(),
-            Self::Deb | Self::Rpm => Command::new("/usr/bin/vpndeck").spawn(),
+            Self::Deb | Self::Rpm => Command::new("/usr/bin/ether-ovpn").spawn(),
             Self::Flatpak { app_id, .. } => {
                 Command::new("flatpak-spawn").args(["--host", "flatpak", "run", app_id]).spawn()
             }
         };
-        result.map(drop).map_err(|e| format!("Couldn't restart VPNdeck: {e}"))
+        result.map(drop).map_err(|e| format!("Couldn't restart Ether: {e}"))
     }
 }
 
@@ -204,7 +221,7 @@ fn download_and_install(install: &Install, assets: &[Asset], report: &dyn Fn(Pro
         .find(|a| a.name == CHECKSUMS)
         .ok_or("The release has no checksums to verify the download with")?;
 
-    let dir = dirs::cache_dir().ok_or("No cache folder to download to")?.join("vpndeck").join("updates");
+    let dir = dirs::cache_dir().ok_or("No cache folder to download to")?.join("ether").join("updates");
     fs::create_dir_all(&dir).map_err(|e| format!("Can't create {}: {e}", dir.display()))?;
     let file = dir.join(&asset.name);
 
@@ -215,6 +232,7 @@ fn download_and_install(install: &Install, assets: &[Asset], report: &dyn Fn(Pro
         if digest != expected {
             return Err("The download is damaged (its checksum doesn't match). Try again.".to_owned());
         }
+        verify_signature(assets, &file, &asset.name)?;
         report(Progress::Installing);
         match install {
             Install::Binary(exe) => replace_binary(&file, exe),
@@ -254,7 +272,7 @@ fn download_agent() -> ureq::Agent {
 fn download(asset: &Asset, path: &Path, report: &dyn Fn(Progress)) -> Result<String, String> {
     let mut response = download_agent()
         .get(&asset.url)
-        .header("User-Agent", format!("vpndeck/{CURRENT}"))
+        .header("User-Agent", format!("ether-ovpn/{CURRENT}"))
         .call()
         .map_err(|e| format!("Couldn't download the update: {e}"))?;
     let total = response.body().content_length().unwrap_or(asset.size).max(1);
@@ -271,6 +289,9 @@ fn download(asset: &Asset, path: &Path, report: &dyn Fn(Progress)) -> Result<Str
         hasher.update(&buf[..n]);
         out.write_all(&buf[..n]).map_err(|e| format!("Can't save the download: {e}"))?;
         done += n as u64;
+        if done > MAX_DOWNLOAD {
+            return Err("The download is far larger than a release should be".to_owned());
+        }
         let fraction = (done as f32 / total as f32).min(1.0);
         if fraction - last_report >= 0.01 {
             last_report = fraction;
@@ -285,10 +306,10 @@ fn download(asset: &Asset, path: &Path, report: &dyn Fn(Progress)) -> Result<Str
 fn expected_checksum(sums: &Asset, name: &str) -> Result<String, String> {
     let mut response = download_agent()
         .get(&sums.url)
-        .header("User-Agent", format!("vpndeck/{CURRENT}"))
+        .header("User-Agent", format!("ether-ovpn/{CURRENT}"))
         .call()
         .map_err(|e| format!("Couldn't download the checksums: {e}"))?;
-    let text = response.body_mut().read_to_string().map_err(|e| e.to_string())?;
+    let text = response.body_mut().with_config().limit(MAX_SUMS).read_to_string().map_err(|e| e.to_string())?;
     checksum_for(&text, name).ok_or_else(|| format!("{name} isn't listed in {CHECKSUMS}"))
 }
 
@@ -299,19 +320,52 @@ fn checksum_for(sums: &str, name: &str) -> Option<String> {
     })
 }
 
-/// Swaps in the `vpndeck` binary from a release tarball. The running
+/// Checks the archive against the release's minisign signature.
+///
+/// The checksum only proves the download matches the release page; the
+/// signature proves the release page is ours. With no key configured there is
+/// nothing to check against, so the step is skipped.
+fn verify_signature(assets: &[Asset], file: &Path, name: &str) -> Result<(), String> {
+    if PUBLIC_KEY.is_empty() {
+        return Ok(());
+    }
+    let key = minisign_verify::PublicKey::from_base64(PUBLIC_KEY)
+        .map_err(|e| format!("The built-in release key is broken: {e}"))?;
+    let signature_name = format!("{name}{SIGNATURE_SUFFIX}");
+    let asset = assets
+        .iter()
+        .find(|a| a.name == signature_name)
+        .ok_or("This release isn't signed, so it can't be installed")?;
+    let mut response = download_agent()
+        .get(&asset.url)
+        .header("User-Agent", format!("ether-ovpn/{CURRENT}"))
+        .call()
+        .map_err(|e| format!("Couldn't download the signature: {e}"))?;
+    let text = response
+        .body_mut()
+        .with_config()
+        .limit(MAX_SIGNATURE)
+        .read_to_string()
+        .map_err(|e| format!("Couldn't read the signature: {e}"))?;
+    let signature = minisign_verify::Signature::decode(&text).map_err(|e| format!("The signature is unreadable: {e}"))?;
+    let bytes = fs::read(file).map_err(|e| format!("Can't read the download back: {e}"))?;
+    key.verify(&bytes, &signature, false)
+        .map_err(|_| "The update's signature doesn't match, so it wasn't installed".to_owned())
+}
+
+/// Swaps in the `ether-ovpn` binary from a release tarball. The running
 /// program keeps working: renaming over it doesn't touch the open file.
 fn replace_binary(tarball: &Path, exe: &Path) -> Result<(), String> {
-    let dir = exe.parent().ok_or("Can't find the folder VPNdeck is in")?;
-    let staged = dir.join(".vpndeck-update");
+    let dir = exe.parent().ok_or("Can't find the folder Ether is in")?;
+    let staged = dir.join(".ether-ovpn-update");
     let file = File::open(tarball).map_err(|e| e.to_string())?;
     let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(BufReader::new(file)));
     let mut found = false;
     for entry in archive.entries().map_err(|e| format!("The download isn't a valid archive: {e}"))? {
         let mut entry = entry.map_err(|e| format!("The download isn't a valid archive: {e}"))?;
         let path = entry.path().map_err(|e| e.to_string())?.into_owned();
-        // The binary sits at vpndeck-<version>-x86_64-linux/vpndeck.
-        if path.components().count() == 2 && path.file_name().is_some_and(|n| n == "vpndeck") {
+        // The binary sits at ether-ovpn-<version>-x86_64-linux/ether-ovpn.
+        if path.components().count() == 2 && path.file_name().is_some_and(|n| n == "ether-ovpn") {
             let mut out = File::create(&staged)
                 .map_err(|e| format!("Can't write to {} ({e}). Install the update by hand.", dir.display()))?;
             std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
@@ -320,7 +374,7 @@ fn replace_binary(tarball: &Path, exe: &Path) -> Result<(), String> {
         }
     }
     if !found {
-        return Err("The archive doesn't contain the VPNdeck program".to_owned());
+        return Err("The archive doesn't contain the Ether program".to_owned());
     }
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(&staged, fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
@@ -355,7 +409,8 @@ fn run_installer(command: &mut Command) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{checksum_for, is_newer};
+    use super::{PUBLIC_KEY, checksum_for, is_newer, verify_signature};
+    use std::path::Path;
 
     #[test]
     fn compares_versions() {
@@ -369,9 +424,16 @@ mod tests {
 
     #[test]
     fn finds_checksums() {
-        let sums = "ABC123  vpndeck_0.2.0_amd64.deb\ndef456 *vpndeck-0.2.0-x86_64-linux.tar.gz\n";
-        assert_eq!(checksum_for(sums, "vpndeck_0.2.0_amd64.deb").as_deref(), Some("abc123"));
-        assert_eq!(checksum_for(sums, "vpndeck-0.2.0-x86_64-linux.tar.gz").as_deref(), Some("def456"));
+        let sums = "ABC123  ether-ovpn_0.2.0_amd64.deb\ndef456 *ether-ovpn-0.2.0-x86_64-linux.tar.gz\n";
+        assert_eq!(checksum_for(sums, "ether-ovpn_0.2.0_amd64.deb").as_deref(), Some("abc123"));
+        assert_eq!(checksum_for(sums, "ether-ovpn-0.2.0-x86_64-linux.tar.gz").as_deref(), Some("def456"));
         assert_eq!(checksum_for(sums, "other"), None);
+    }
+
+    #[test]
+    fn skips_the_signature_check_while_no_key_is_configured() {
+        // Releases aren't signed yet, so the step must not block an install.
+        assert!(PUBLIC_KEY.is_empty());
+        assert!(verify_signature(&[], Path::new("/nonexistent/update.tar.gz"), "update.tar.gz").is_ok());
     }
 }

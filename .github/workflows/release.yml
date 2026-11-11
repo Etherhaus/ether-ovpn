@@ -42,6 +42,6 @@ jobs:
         run: |
           tag="$GITHUB_REF_NAME"
           gh release view "$tag" >/dev/null 2>&1 ||
-            gh release create "$tag" --draft --title "VPNdeck ${tag#v}" --notes ""
+            gh release create "$tag" --draft --title "Ether ${tag#v}" --notes ""
           gh release upload "$tag" dist/* --clobber
           gh release edit "$tag" --draft=false --latest
