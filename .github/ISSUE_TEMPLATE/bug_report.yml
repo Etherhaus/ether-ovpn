@@ -1,0 +1,80 @@
+name: Bug report
+description: Something in Ether doesn't work the way it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The **Copy diagnostics** button in the log window puts the version, the OS, the OpenVPN
+        version and the last 50 log lines on your clipboard. Pasting that below saves a round trip.
+
+        A security problem doesn't belong here — see [SECURITY.md](https://github.com/Etherhaus/ether-ovpn/blob/main/SECURITY.md).
+
+        <sub>По-русски тоже можно.</sub>
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Import a profile from ...
+        2. Click Connect
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Ether version
+      description: Shown in the title bar, or the release you downloaded.
+      placeholder: 0.3.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: package
+    attributes:
+      label: How it was installed
+      options:
+        - .deb (Debian, Ubuntu, Mint)
+        - .rpm (Fedora, openSUSE)
+        - Flatpak
+        - Tarball
+        - Built from source
+    validations:
+      required: true
+
+  - type: input
+    id: system
+    attributes:
+      label: Distribution and desktop
+      placeholder: Fedora 41, GNOME 47, Wayland
+    validations:
+      required: true
+
+  - type: input
+    id: openvpn
+    attributes:
+      label: OpenVPN version
+      description: The first line of `openvpn --version`.
+      placeholder: OpenVPN 2.6.12
+    validations:
+      required: false
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Pasted from the Copy diagnostics button.
+      render: text
+    validations:
+      required: false

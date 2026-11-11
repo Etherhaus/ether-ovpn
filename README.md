@@ -9,6 +9,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Etherhaus/ether-ovpn/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Etherhaus/ether-ovpn?color=d9531e&labelColor=16161a"></a>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/Etherhaus/ether-ovpn?color=d9531e&labelColor=16161a"></a>
+  <img alt="Linux" src="https://img.shields.io/badge/platform-linux-d9531e?labelColor=16161a">
+</p>
+
+<p align="center">
   A small desktop client for OpenVPN on Linux, written in Rust with <a href="https://slint.dev">Slint</a>.
   Import the <code>.ovpn</code> profiles from your OpenVPN server and connect with one click.
   Works with OpenVPN 2.4 or newer, including servers that ask for a 2FA code.
@@ -83,8 +89,9 @@ one more column in that table.
 
 OpenVPN 2.4 or newer installed on the computer (tested with 2.6):
 
-```
-sudo apt install openvpn
+```bash
+sudo apt install openvpn    # Debian, Ubuntu, Mint
+sudo dnf install openvpn    # Fedora
 ```
 
 The app runs as your user. `openvpn` is started through `pkexec`, so you'll get the normal
@@ -101,6 +108,13 @@ The prebuilt packages are for x86_64.
 
 ```bash
 sudo apt install ./ether-ovpn_*_amd64.deb
+```
+
+**Fedora, openSUSE** (`.rpm`, needs Fedora 40+ or openSUSE Tumbleweed for glibc 2.39):
+
+```bash
+sudo dnf install ./ether-ovpn-*.x86_64.rpm      # Fedora
+sudo zypper install ./ether-ovpn-*.x86_64.rpm   # openSUSE
 ```
 
 **Any distro with Flatpak** (`.flatpak`; the Freedesktop runtime is fetched from Flathub if needed):
@@ -163,6 +177,12 @@ Download the client configuration (`.ovpn` files) from your OpenVPN server, then
 **+ Import** in Ether and pick one or more files. On a fresh install the same button sits in
 the middle of the window. Dropping the files onto the window, pasting a profile from the
 clipboard and downloading one from a link all work too.
+
+## Contributing
+
+Bug reports and pull requests are welcome — [CONTRIBUTING.md](CONTRIBUTING.md) has the build
+steps and a map of the code. A security problem goes to [SECURITY.md](SECURITY.md) instead of a
+public issue.
 
 ## License
 

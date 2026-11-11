@@ -9,6 +9,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Etherhaus/ether-ovpn/releases/latest"><img alt="Последний релиз" src="https://img.shields.io/github/v/release/Etherhaus/ether-ovpn?color=d9531e&labelColor=16161a"></a>
+  <a href="LICENSE"><img alt="Лицензия MIT" src="https://img.shields.io/github/license/Etherhaus/ether-ovpn?color=d9531e&labelColor=16161a"></a>
+  <img alt="Linux" src="https://img.shields.io/badge/platform-linux-d9531e?labelColor=16161a">
+</p>
+
+<p align="center">
   Небольшой настольный клиент OpenVPN для Linux на Rust и <a href="https://slint.dev">Slint</a>.
   Импортируйте <code>.ovpn</code>-профили со своего сервера OpenVPN и подключайтесь одним щелчком.
   Работает с OpenVPN 2.4 и новее, включая серверы, которые спрашивают код двухфакторной
@@ -88,8 +94,9 @@ OpenVPN.
 
 OpenVPN 2.4 или новее, установленный в системе (проверено на 2.6):
 
-```
-sudo apt install openvpn
+```bash
+sudo apt install openvpn    # Debian, Ubuntu, Mint
+sudo dnf install openvpn    # Fedora
 ```
 
 Приложение работает от вашего пользователя. `openvpn` запускается через `pkexec`, поэтому при
@@ -107,6 +114,13 @@ OpenVPN должен быть установлен в системе незав�
 
 ```bash
 sudo apt install ./ether-ovpn_*_amd64.deb
+```
+
+**Fedora, openSUSE** (`.rpm`, нужен Fedora 40+ или openSUSE Tumbleweed ради glibc 2.39):
+
+```bash
+sudo dnf install ./ether-ovpn-*.x86_64.rpm      # Fedora
+sudo zypper install ./ether-ovpn-*.x86_64.rpm   # openSUSE
 ```
 
 **Любой дистрибутив с Flatpak** (`.flatpak`; рантайм Freedesktop при необходимости скачается с Flathub):
@@ -170,6 +184,11 @@ minisign -G                                   # один раз, создаёт 
 **+ Импорт** в Ether и выберите один или несколько файлов. На свежей установке та же кнопка
 находится в середине окна. Перетаскивание файлов на окно, вставка профиля из буфера обмена и
 скачивание по ссылке тоже работают.
+
+## Участие
+
+Баг-репорты и pull request'ы приветствуются — в [CONTRIBUTING.md](CONTRIBUTING.md) есть шаги
+сборки и карта кода. Об уязвимости пишите по [SECURITY.md](SECURITY.md), а не в публичный issue.
 
 ## Лицензия
 

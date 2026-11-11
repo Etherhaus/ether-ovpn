@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security problem
+    url: https://github.com/Etherhaus/ether-ovpn/security/advisories/new
+    about: Report it privately instead of in a public issue.
+  - name: Install, 2FA and requirements
+    url: https://github.com/Etherhaus/ether-ovpn#readme
+    about: The README answers most questions before they become issues.

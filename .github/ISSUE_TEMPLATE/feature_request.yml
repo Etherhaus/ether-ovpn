@@ -1,0 +1,34 @@
+name: Feature request
+description: Something Ether should do that it doesn't
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ether tries to stay small: import a profile, connect, show what's happening. A new setting
+        is cheap, a new dependency usually isn't, so say what the change costs if you can.
+
+        <sub>По-русски тоже можно.</sub>
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The situation, not the solution. "My server pushes DNS and it never applies" is more useful than "add a DNS setting".
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you have in mind
+    validations:
+      required: false
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What you do instead today
+      description: A script, another client, a manual step — it tells us how much the gap hurts.
+    validations:
+      required: false
