@@ -193,6 +193,11 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui_weak = ui.as_weak();
         move || {
             let window = LogWindow::new()?;
+            {
+                let app = app.borrow();
+                apply_theme(&window, app.dark);
+                i18n::apply(&window, app.settings.lang());
+            }
             window.set_lines(ModelRc::from(log_model.clone()));
             window.on_copy_all({
                 let app = app.clone();
@@ -265,6 +270,14 @@ fn main() -> Result<(), slint::PlatformError> {
                     log_model.set_vec(Vec::new());
                 }
             });
+            window.on_close_window({
+                let window_weak = window.as_weak();
+                move || {
+                    if let Some(window) = window_weak.upgrade() {
+                        let _ = window.hide();
+                    }
+                }
+            });
             // Lines may have arrived before the window existed, so ask the view
             // to scroll to the end the way a new line would.
             window.set_count(1);
@@ -278,6 +291,11 @@ fn main() -> Result<(), slint::PlatformError> {
         let profile_line_model = profile_line_model.clone();
         move || {
             let window = ProfileWindow::new()?;
+            {
+                let app = app.borrow();
+                apply_theme(&window, app.dark);
+                i18n::apply(&window, app.settings.lang());
+            }
             window.set_lines(ModelRc::from(profile_line_model.clone()));
             window.on_check({
                 let window_weak = window.as_weak();
@@ -362,12 +380,20 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.on_set_theme({
         let ui_weak = ui.as_weak();
         let app = app.clone();
+        let log_window = log_window.clone();
+        let profile_window = profile_window.clone();
         move |mode| {
             let ui = ui_weak.unwrap();
             let mut app = app.borrow_mut();
             app.settings.set_theme(&mode);
             app.dark = app.settings.dark();
             apply_theme(&ui, app.dark);
+            if let Some(window) = log_window.opened() {
+                apply_theme(&window, app.dark);
+            }
+            if let Some(window) = profile_window.opened() {
+                apply_theme(&window, app.dark);
+            }
             ui.set_theme_mode(app.settings.theme_mode().into());
             if let Err(e) = app.settings.save() {
                 let t = Strings::new(app.settings.lang());
@@ -380,6 +406,8 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui_weak = ui.as_weak();
         let app = app.clone();
         let profile_model = profile_model.clone();
+        let log_window = log_window.clone();
+        let profile_window = profile_window.clone();
         move |code| {
             let ui = ui_weak.unwrap();
             let mut app = app.borrow_mut();
@@ -390,6 +418,12 @@ fn main() -> Result<(), slint::PlatformError> {
                 toast(&ui, &mut app, i18n::fill(t.language_save_failed, &[&e.to_string()]), true);
             }
             i18n::apply(&ui, lang);
+            if let Some(window) = log_window.opened() {
+                i18n::apply(&window, lang);
+            }
+            if let Some(window) = profile_window.opened() {
+                i18n::apply(&window, lang);
+            }
             ui.set_lang(lang.code().into());
             // The status line is a live message, so only reset it when nothing runs.
             if ui.get_conn_state() == ConnState::Idle {
@@ -950,17 +984,18 @@ fn main() -> Result<(), slint::PlatformError> {
         let app = app.clone();
         move || {
             let ui = ui_weak.unwrap();
-            let mut app = app.borrow_mut();
-            save_window_size(&ui, &mut app);
-            if app.tray.is_none() {
-                let _ = slint::quit_event_loop();
-            } else if !app.tray_hint_shown {
-                app.tray_hint_shown = true;
-                if app.settings.notifications {
-                    notify::send(Strings::new(app.settings.lang()).notify_tray, "");
-                }
-            }
+            hide_to_tray(&ui, &mut app.borrow_mut());
             CloseRequestResponse::HideWindow
+        }
+    });
+
+    // The title bar's × does what the compositor's close button does.
+    ui.on_hide_window({
+        let ui_weak = ui.as_weak();
+        let app = app.clone();
+        move || {
+            let ui = ui_weak.unwrap();
+            hide_to_tray(&ui, &mut app.borrow_mut());
         }
     });
 
@@ -1096,8 +1131,16 @@ pub fn sandboxed() -> bool {
     std::env::var_os("FLATPAK_ID").is_some()
 }
 
-/// Switches the app's palette. The widgets are the app's own, so this is all it takes.
-fn apply_theme(ui: &AppWindow, dark: bool) {
+/// Switches the palette of `ui`.
+///
+/// The widgets are the app's own, so this is all it takes. Globals are per
+/// component tree, so every window the app opens needs this call: a window
+/// built later starts with the default palette.
+fn apply_theme<C>(ui: &C, dark: bool)
+where
+    C: ComponentHandle,
+    for<'a> Theme<'a>: slint::Global<'a, C>,
+{
     ui.global::<Theme>().set_dark(dark);
 }
 
@@ -1107,6 +1150,22 @@ fn sync_settings(ui: &AppWindow, app: &App) {
     ui.set_autostart(app.settings.autostart);
     ui.set_auto_connect(app.settings.auto_connect);
     ui.set_notifications(app.settings.notifications);
+}
+
+/// Hides the window, or quits when there is no tray icon to bring it back.
+fn hide_to_tray(ui: &AppWindow, app: &mut App) {
+    save_window_size(ui, app);
+    if app.tray.is_none() {
+        let _ = slint::quit_event_loop();
+        return;
+    }
+    if !app.tray_hint_shown {
+        app.tray_hint_shown = true;
+        if app.settings.notifications {
+            notify::send(Strings::new(app.settings.lang()).notify_tray, "");
+        }
+    }
+    let _ = ui.hide();
 }
 
 fn save_window_size(ui: &AppWindow, app: &mut App) {

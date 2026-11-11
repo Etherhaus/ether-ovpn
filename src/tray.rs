@@ -131,35 +131,25 @@ impl ksni::Tray for Tray {
     }
 }
 
-/// The tray version of the app icon: the tunnel mark on its tile, plus a status dot.
+/// The tray version of the app icon: the shield mark, tinted by status.
+///
+/// The tray has no room for the tile, so the mark stands alone. The colours are
+/// the ones the window uses for the same states — coral when connected, never
+/// green.
 fn icon_svg(status: Status) -> String {
-    let (top, bottom) = match status {
-        Status::Idle => ("#4A5163", "#333947"),
-        _ => ("#6D7CFF", "#3B45C9"),
-    };
-    let badge = match status {
-        Status::Idle => String::new(),
-        Status::Connecting => badge("#F59E0B"),
-        Status::Connected => badge("#22C55E"),
-        Status::Error => badge("#EF4444"),
+    let color = match status {
+        Status::Idle => "#8b8b93",
+        Status::Connecting => "#f8e45c",
+        Status::Connected => "#fb8762",
+        Status::Error => "#f66151",
     };
     format!(
         r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
-  <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="{top}"/>
-      <stop offset="1" stop-color="{bottom}"/>
-    </linearGradient>
-  </defs>
-  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#g)"/>
-  <path d="M14 52 L14 30 A18 18 0 0 1 50 30 L50 52 L42 52 L42 30 A10 10 0 0 0 22 30 L22 52 Z" fill="#FFFFFF"/>
-  {badge}
+  <g transform="translate(32 31) scale(1.18) translate(-32 -31)">
+    <path fill-rule="evenodd" fill="{color}" d="M32 11.5 C 37.75 15.25 43.25 17.25 49.5 17.75 C 49.5 29.5 47 41.25 32 50.5 C 17 41.25 14.5 29.5 14.5 17.75 C 20.75 17.25 26.25 15.25 32 11.5 Z M32 25.25 a 5.25 5.25 0 0 1 5.25 5.25 c 0 2.125 -1.25 3.875 -3 4.75 l 2 8 q 0.25 1.25 -1 1.25 h -6.5 q -1.25 0 -1 -1.25 l 2 -8 c -1.75 -0.875 -3 -2.625 -3 -4.75 a 5.25 5.25 0 0 1 5.25 -5.25 Z"/>
+  </g>
 </svg>"##
     )
-}
-
-fn badge(color: &str) -> String {
-    format!(r##"<circle cx="50" cy="50" r="11" fill="{color}" stroke="#FFFFFF" stroke-width="3.5"/>"##)
 }
 
 fn render(svg: &str, size: u32) -> Option<Icon> {

@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fafaf9"/>
+      <stop offset="1" stop-color="#efeeec"/>
+    </linearGradient>
+    <linearGradient id="coral" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fb8762"/>
+      <stop offset="1" stop-color="#e2603a"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.42" r="0.62">
+      <stop offset="0" stop-color="#fb8762" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#fb8762" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="shieldFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#fbfbfa"/>
+    </linearGradient>
+  </defs>
+
+  <!-- фон: скруглённый квадрат, светлый Adwaita -->
+  <rect x="0" y="0" width="512" height="512" rx="116" fill="url(#bg)"/>
+  <!-- мягкое коралловое свечение за щитом -->
+  <rect x="0" y="0" width="512" height="512" rx="116" fill="url(#glow)"/>
+
+  <!-- щит -->
+  <path d="M256 92 C 302 122 346 138 396 142 C 396 236 376 330 256 404 C 136 330 116 236 116 142 C 166 138 210 122 256 92 Z"
+        fill="url(#shieldFill)" stroke="url(#coral)" stroke-width="11" stroke-linejoin="round"/>
+
+  <!-- лёгкая тень-блик на щите -->
+  <path d="M256 106 C 292 130 330 145 372 150 C 370 200 358 254 322 302 C 340 246 344 190 330 150 C 306 145 280 128 256 106 Z"
+        fill="#000000" opacity="0.05"/>
+
+  <!-- замочная скважина -->
+  <path d="M256 202 a 42 42 0 0 1 42 42 c 0 17 -10 31 -24 38 l 16 64 q 2 10 -8 10 h -52 q -10 0 -8 -10 l 16 -64 c -14 -7 -24 -21 -24 -38 a 42 42 0 0 1 42 -42 z"
+        fill="url(#coral)"/>
+
+  <!-- точка-огонёк в скважине, как индикатор соединения -->
+  <circle cx="256" cy="244" r="12" fill="#1a1a1a" opacity="0.55"/>
+</svg>

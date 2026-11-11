@@ -33,12 +33,20 @@
       <caption>Connected to a VPN</caption>
       <image>https://raw.githubusercontent.com/dmitry/ether-ovpn/main/docs/screenshot.png</image>
     </screenshot>
+    <screenshot>
+      <caption>Dark theme</caption>
+      <image>https://raw.githubusercontent.com/dmitry/ether-ovpn/main/docs/screenshot-dark.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Light theme</caption>
+      <image>https://raw.githubusercontent.com/dmitry/ether-ovpn/main/docs/screenshot-light.png</image>
+    </screenshot>
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
     <release version="0.3.0" date="2026-11-11">
       <description>
-        <p>Renames the app to Ether, gives it a neutral monogram icon and a cleaner interface: a quieter palette, a status card built around the connection state, segmented theme and language pickers, and a lighter log window.</p>
+        <p>Renames the app to Ether and gives it the EtherOS look: a coral shield icon, a coral window frame with a title bar of its own, flat cards with hairline borders, Adwaita Sans for text and JetBrains Mono for the technical details, and a status card built around the connection state. Connected is coral, connecting is yellow, a failure is red.</p>
         <p>Adds profiles dropped onto the window, pasted from the clipboard or downloaded from a link, renaming, a download-speed graph, desktop notifications, automatic reconnection, start with the session, connect on launch, a theme that follows the system, a filterable log with warnings and errors highlighted, a diagnostics button, keyboard shortcuts, and a warning when a profile runs programs as root.</p>
       </description>
     </release>

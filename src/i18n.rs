@@ -4,9 +4,9 @@
 //! adding a column, and nothing else in the app changes. The Slint side reads the
 //! strings from the `Labels` global, which [`apply`] fills in.
 
-use slint::ComponentHandle;
+use slint::{ComponentHandle, Global};
 
-use crate::{AppWindow, Labels};
+use crate::Labels;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lang {
@@ -69,8 +69,15 @@ macro_rules! labels {
             }
         }
 
-        /// Fills the UI's `Labels` global with the strings of `lang`.
-        pub fn apply(ui: &AppWindow, lang: Lang) {
+        /// Fills the `Labels` global of `ui` with the strings of `lang`.
+        ///
+        /// Globals are per component tree, so every window the app opens needs
+        /// this call: a window built later starts with empty strings.
+        pub fn apply<C>(ui: &C, lang: Lang)
+        where
+            C: ComponentHandle,
+            for<'a> Labels<'a>: Global<'a, C>,
+        {
             let s = Strings::new(lang);
             let labels = ui.global::<Labels>();
             $(labels_set!(labels, s, $field $(, $setter)?);)*
