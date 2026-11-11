@@ -19,7 +19,8 @@ const CHECKSUMS: &str = "SHA256SUMS";
 /// The minisign public key releases are signed with, base64 as printed in the
 /// `.pub` file. While it is empty, releases aren't signed and the download is
 /// only checked against SHA256SUMS, which proves nothing about who built it.
-/// Fill it in with `packaging/sign-release.sh` output to turn signing on.
+/// Fill it in with the line after `untrusted comment:` in `~/.minisign/minisign.pub`
+/// to turn signing on; see "Signing releases" in README.md.
 const PUBLIC_KEY: &str = "";
 const SIGNATURE_SUFFIX: &str = ".minisig";
 /// Caps on what a response may cost us, so a hostile or broken server can't
@@ -329,28 +330,52 @@ fn verify_signature(assets: &[Asset], file: &Path, name: &str) -> Result<(), Str
     if PUBLIC_KEY.is_empty() {
         return Ok(());
     }
-    let key = minisign_verify::PublicKey::from_base64(PUBLIC_KEY)
-        .map_err(|e| format!("The built-in release key is broken: {e}"))?;
+    let asset = signature_asset(assets, name)?;
+    let text = fetch_signature(asset)?;
+    let bytes = fs::read(file).map_err(|e| format!("Can't read the download back: {e}"))?;
+    verify_with_key(PUBLIC_KEY, &bytes, &text)
+}
+
+/// Finds the `.minisig` file that belongs to `name` in the release.
+fn signature_asset<'a>(assets: &'a [Asset], name: &str) -> Result<&'a Asset, String> {
     let signature_name = format!("{name}{SIGNATURE_SUFFIX}");
-    let asset = assets
-        .iter()
-        .find(|a| a.name == signature_name)
-        .ok_or("This release isn't signed, so it can't be installed")?;
+    assets.iter().find(|a| a.name == signature_name).ok_or_else(|| {
+        format!("This release has no {signature_name}, so the update can't be verified and won't be installed")
+    })
+}
+
+fn fetch_signature(asset: &Asset) -> Result<String, String> {
     let mut response = download_agent()
         .get(&asset.url)
         .header("User-Agent", format!("ether-ovpn/{CURRENT}"))
         .call()
         .map_err(|e| format!("Couldn't download the signature: {e}"))?;
-    let text = response
+    response
         .body_mut()
         .with_config()
         .limit(MAX_SIGNATURE)
         .read_to_string()
-        .map_err(|e| format!("Couldn't read the signature: {e}"))?;
-    let signature = minisign_verify::Signature::decode(&text).map_err(|e| format!("The signature is unreadable: {e}"))?;
-    let bytes = fs::read(file).map_err(|e| format!("Can't read the download back: {e}"))?;
-    key.verify(&bytes, &signature, false)
-        .map_err(|_| "The update's signature doesn't match, so it wasn't installed".to_owned())
+        .map_err(|e| format!("Couldn't read the signature: {e}"))
+}
+
+/// Checks `data` against a minisign signature made with `public_key`.
+fn verify_with_key(public_key: &str, data: &[u8], signature_text: &str) -> Result<(), String> {
+    let key = minisign_verify::PublicKey::from_base64(public_key)
+        .map_err(|e| format!("The built-in release key is broken: {e}"))?;
+    let signature = minisign_verify::Signature::decode(signature_text)
+        .map_err(|e| format!("The update's signature is unreadable: {e}"))?;
+    key.verify(data, &signature, false).map_err(|e| match e {
+        minisign_verify::Error::UnexpectedKeyId => {
+            "The update was signed with a key that isn't Ether's, so it wasn't installed".to_owned()
+        }
+        minisign_verify::Error::InvalidSignature => {
+            "The update's signature doesn't match the download, so it wasn't installed".to_owned()
+        }
+        minisign_verify::Error::UnexpectedAlgorithm | minisign_verify::Error::UnsupportedAlgorithm => {
+            "The update's signature is in an old format Ether can't check, so it wasn't installed".to_owned()
+        }
+        other => format!("The update's signature couldn't be checked: {other}"),
+    })
 }
 
 /// Swaps in the `ether-ovpn` binary from a release tarball. The running
@@ -409,8 +434,25 @@ fn run_installer(command: &mut Command) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{PUBLIC_KEY, checksum_for, is_newer, verify_signature};
+    use super::{Asset, PUBLIC_KEY, checksum_for, is_newer, signature_asset, verify_signature, verify_with_key};
     use std::path::Path;
+
+    const TEST_KEY: &str = include_str!("../tests/fixtures/minisign/test-key.pub");
+    const OTHER_KEY: &str = include_str!("../tests/fixtures/minisign/other-key.pub");
+    const PAYLOAD: &[u8] = include_bytes!("../tests/fixtures/minisign/payload.txt");
+    const TAMPERED: &[u8] = include_bytes!("../tests/fixtures/minisign/payload-tampered.txt");
+    const SIGNATURE: &str = include_str!("../tests/fixtures/minisign/payload.txt.minisig");
+    const LEGACY: &str = include_str!("../tests/fixtures/minisign/payload.txt.legacy.minisig");
+    const GARBAGE: &str = include_str!("../tests/fixtures/minisign/garbage.minisig");
+
+    /// The base64 line of a `.pub` file, which is what `PUBLIC_KEY` holds.
+    fn key_line(pub_file: &str) -> &str {
+        pub_file.lines().nth(1).expect("the fixture has a key line")
+    }
+
+    fn asset(name: &str) -> Asset {
+        Asset { name: name.to_owned(), url: format!("https://example.invalid/{name}"), size: 0 }
+    }
 
     #[test]
     fn compares_versions() {
@@ -428,6 +470,55 @@ mod tests {
         assert_eq!(checksum_for(sums, "ether-ovpn_0.2.0_amd64.deb").as_deref(), Some("abc123"));
         assert_eq!(checksum_for(sums, "ether-ovpn-0.2.0-x86_64-linux.tar.gz").as_deref(), Some("def456"));
         assert_eq!(checksum_for(sums, "other"), None);
+    }
+
+    #[test]
+    fn accepts_a_signature_from_the_release_key() {
+        assert_eq!(verify_with_key(key_line(TEST_KEY), PAYLOAD, SIGNATURE), Ok(()));
+    }
+
+    #[test]
+    fn finds_the_signature_of_the_downloaded_file() {
+        let assets = [asset("payload.txt.minisig"), asset("other.minisig")];
+        assert_eq!(signature_asset(&assets, "payload.txt").unwrap().name, "payload.txt.minisig");
+    }
+
+    #[test]
+    fn refuses_a_release_without_a_signature() {
+        let assets = [asset("payload.txt"), asset("SHA256SUMS")];
+        let error = signature_asset(&assets, "payload.txt").unwrap_err();
+        assert!(error.contains("payload.txt.minisig"), "{error}");
+        assert!(error.contains("won't be installed"), "{error}");
+    }
+
+    #[test]
+    fn refuses_a_download_that_doesnt_match_its_signature() {
+        let error = verify_with_key(key_line(TEST_KEY), TAMPERED, SIGNATURE).unwrap_err();
+        assert!(error.contains("doesn't match"), "{error}");
+    }
+
+    #[test]
+    fn refuses_a_legacy_signature() {
+        let error = verify_with_key(key_line(TEST_KEY), PAYLOAD, LEGACY).unwrap_err();
+        assert!(error.contains("old format"), "{error}");
+    }
+
+    #[test]
+    fn refuses_an_unreadable_signature() {
+        let error = verify_with_key(key_line(TEST_KEY), PAYLOAD, GARBAGE).unwrap_err();
+        assert!(error.contains("unreadable"), "{error}");
+    }
+
+    #[test]
+    fn refuses_a_signature_from_another_key() {
+        let error = verify_with_key(key_line(OTHER_KEY), PAYLOAD, SIGNATURE).unwrap_err();
+        assert!(error.contains("isn't Ether's"), "{error}");
+    }
+
+    #[test]
+    fn refuses_a_broken_built_in_key() {
+        let error = verify_with_key("not a key", PAYLOAD, SIGNATURE).unwrap_err();
+        assert!(error.contains("release key is broken"), "{error}");
     }
 
     #[test]

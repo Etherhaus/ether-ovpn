@@ -166,17 +166,32 @@ Release соберёт тарбол, .deb, .rpm, Flatpak и `SHA256SUMS` на Ub
 
 `SHA256SUMS` доказывает только то, что скачанный файл совпадает со страницей релиза. Чтобы
 доказать, что страница релиза наша, подпишите файлы через
-[minisign](https://jedisct1.github.io/minisign/) и приложите `.minisig` к релизу:
+[minisign](https://jedisct1.github.io/minisign/) и приложите `.minisig` к релизу.
+
+Ключ создаётся один раз и хранится вне репозитория:
 
 ```bash
-minisign -G                                   # один раз, создаёт ~/.minisign/minisign.key
-./packaging/sign-release.sh dist/*            # пишет dist/*.minisig
+minisign -G                                   # создаёт ~/.minisign/minisign.key
 ```
 
-Затем вставьте base64-строку из `~/.minisign/minisign.pub` (ту, что идёт после
-`untrusted comment:`) в `PUBLIC_KEY` в `src/updater.rs` и пересоберите. С этого момента Ether
-отказывается ставить обновление, подпись которого не совпадает. Пока `PUBLIC_KEY` пуст, проверка
-пропускается, так что подпись и заполнение ключа должны появиться вместе.
+Вставьте base64-строку из `~/.minisign/minisign.pub` (ту, что идёт после `untrusted comment:`)
+в `PUBLIC_KEY` в `src/updater.rs` и пересоберите. Пока `PUBLIC_KEY` пуст, Ether проверку
+пропускает, поэтому ключ должен попасть в релиз раньше, чем его пользователи окажутся под
+защитой.
+
+Когда workflow Release приложил пакеты к релизу, подписывайте именно их, а не локальную сборку,
+иначе подписи не совпадут с опубликованными файлами:
+
+```bash
+gh release download v0.3.1 -D dist
+./packaging/sign-release.sh dist/*            # пишет dist/*.minisig
+gh release upload v0.3.1 dist/*.minisig
+```
+
+`sign-release.sh` отказывается подписывать ключом, который не совпадает с `PUBLIC_KEY`, и
+проверяет каждую записанную подпись. С этого момента Ether отказывается ставить обновление,
+подпись которого отсутствует, не читается или сделана другим ключом, и говорит, что именно
+случилось.
 
 ## С чего начать
 
