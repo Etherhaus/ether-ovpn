@@ -5,6 +5,10 @@
 <h1 align="center">Ether</h1>
 
 <p align="center">
+  <b>English</b> · <a href="README.ru.md">Русский</a>
+</p>
+
+<p align="center">
   A small desktop client for OpenVPN on Linux, written in Rust with <a href="https://slint.dev">Slint</a>.
   Import the <code>.ovpn</code> profiles from your OpenVPN server and connect with one click.
   Works with OpenVPN 2.4 or newer, including servers that ask for a 2FA code.
