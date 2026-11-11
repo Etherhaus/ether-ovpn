@@ -1,4 +1,8 @@
 //! Runs `openvpn` (2.x) through pkexec and drives it over its management interface.
+//!
+//! The wire format, including the challenge/response variants, is documented in
+//! OpenVPN's own management-notes.txt:
+//! <https://github.com/OpenVPN/openvpn/blob/master/doc/management-notes.txt>
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -16,6 +20,10 @@ pub enum Event {
     Bytes { rx: u64, tx: u64 },
     Log(String),
     NeedAuth(AuthRequest),
+    /// The server wants a challenge response outside the password prompt (crtext).
+    Challenge(Challenge),
+    /// Authentication is waiting on the user, and the server may time it out.
+    AuthPending { timeout: Option<u32> },
     AuthFailed,
     /// The openvpn process is gone. Carries an error message unless it was a clean stop.
     Exited(Option<String>),
@@ -26,6 +34,19 @@ pub struct AuthRequest {
     /// The name openvpn asked for, e.g. "Auth" or "Private Key".
     pub realm: String,
     pub needs_username: bool,
+    /// Set when the server wants a challenge response along with the password.
+    pub challenge: Option<Challenge>,
+}
+
+/// A challenge/response the server asked for on top of the password.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Challenge {
+    /// `--static-challenge` in the profile: the response travels with the password.
+    Static { echo: bool, concat: bool, text: String },
+    /// CRV1: the previous attempt failed, and the response goes in the next password.
+    Dynamic { echo: bool, required: bool, state: String, text: String },
+    /// crtext (OpenVPN 2.5+): answered with `cr-response` while auth is pending.
+    CrText { echo: bool, required: bool, text: String },
 }
 
 type Emit = Arc<dyn Fn(Event) + Send + Sync>;
@@ -78,6 +99,9 @@ impl Session {
             .arg(&pw_file)
             .args(["--management-hold", "--management-query-passwords"])
             .args(["--auth-retry", "interact"])
+            // Announce crtext support, or servers that check IV_SSO never send a
+            // 2FA challenge (OpenVPN 2.5+).
+            .args(["--setenv", "IV_SSO", "crtext"])
             .args(dns_script_args())
             .args(privilege_args(config))
             .stdin(Stdio::null())
@@ -131,12 +155,24 @@ impl Session {
         Ok(Session { shared })
     }
 
-    pub fn send_auth(&self, req: &AuthRequest, username: &str, password: &str) {
+    pub fn send_auth(&self, req: &AuthRequest, username: &str, password: &str, code: &str) {
         let realm = quote(&req.realm);
         if req.needs_username {
             self.send(&format!("username {realm} {}", quote(username)));
         }
-        self.send(&format!("password {realm} {}", quote(password)));
+        let password = match &req.challenge {
+            // FORMAT=1: the profile asked for the response to be glued to the password.
+            Some(Challenge::Static { concat: true, .. }) => format!("{password}{code}"),
+            Some(Challenge::Static { .. }) => format!("SCRV1:{}:{}", base64(password), base64(code)),
+            Some(Challenge::Dynamic { state, .. }) => format!("CRV1::{state}::{code}"),
+            _ => password.to_string(),
+        };
+        self.send(&format!("password {realm} {}", quote(&password)));
+    }
+
+    /// Answers a crtext challenge, which arrives while authentication is pending.
+    pub fn send_cr_response(&self, code: &str) {
+        self.send(&format!("cr-response {}", base64(code)));
     }
 
     pub fn disconnect(&self) {
@@ -178,6 +214,9 @@ fn run_management(port: u16, secret: &str, shared: &Shared, emit: &Emit) {
         send(shared, "hold release");
     }
 
+    // A CRV1 challenge is answered through the password prompt that follows it.
+    let mut pending: Option<Challenge> = None;
+
     for line in BufReader::new(stream).lines() {
         let Ok(line) = line else { break };
         // The password prompt has no newline, so it ends up glued to the first reply.
@@ -186,7 +225,16 @@ fn run_management(port: u16, secret: &str, shared: &Shared, emit: &Emit) {
         if msg.starts_with("HOLD:") {
             send(shared, "hold release");
         } else if let Some(event) = parse_message(msg) {
-            emit(event);
+            match event {
+                Event::Challenge(c @ Challenge::Dynamic { .. }) => pending = Some(c),
+                Event::NeedAuth(mut req) => {
+                    if req.challenge.is_none() {
+                        req.challenge = pending.take();
+                    }
+                    emit(Event::NeedAuth(req));
+                }
+                other => emit(other),
+            }
         }
     }
     *shared.mgmt.lock().unwrap() = None;
@@ -197,6 +245,10 @@ fn parse_message(msg: &str) -> Option<Event> {
         // time,state,description,local ip,remote ip,remote port,...
         let f: Vec<&str> = rest.split(',').collect();
         let field = |i: usize| f.get(i).copied().unwrap_or("").to_string();
+        // AUTH_PENDING carries the server's timeout in the description field.
+        if field(1) == "AUTH_PENDING" {
+            return Some(Event::AuthPending { timeout: field(2).parse().ok() });
+        }
         let remote = match (field(4), field(5)) {
             (ip, _) if ip.is_empty() => String::new(),
             (ip, port) if port.is_empty() => ip,
@@ -208,8 +260,21 @@ fn parse_message(msg: &str) -> Option<Event> {
         let (rx, tx) = rest.split_once(',')?;
         return Some(Event::Bytes { rx: rx.trim().parse().ok()?, tx: tx.trim().parse().ok()? });
     }
+    if let Some(rest) = msg.strip_prefix("INFOMSG:") {
+        // CR_TEXT:<flags>:<challenge_text>, the crtext challenge of OpenVPN 2.5+.
+        let (flags, text) = rest.strip_prefix("CR_TEXT:")?.split_once(':')?;
+        return Some(Event::Challenge(Challenge::CrText {
+            echo: has_flag(flags, 'E'),
+            required: has_flag(flags, 'R'),
+            text: text.to_string(),
+        }));
+    }
     if let Some(rest) = msg.strip_prefix("PASSWORD:") {
-        if rest.starts_with("Verification Failed") {
+        if let Some(rest) = rest.strip_prefix("Verification Failed") {
+            // 'Auth' ['CRV1:<flags>:<state_id>:<username_base64>:<challenge_text>']
+            if let Some((_, crv1)) = rest.split_once("['CRV1:") {
+                return parse_crv1(crv1.trim_end_matches("']")).map(Event::Challenge);
+            }
             return Some(Event::AuthFailed);
         }
         let rest = rest.strip_prefix("Need '")?;
@@ -217,12 +282,44 @@ fn parse_message(msg: &str) -> Option<Event> {
         return Some(Event::NeedAuth(AuthRequest {
             realm: realm.to_string(),
             needs_username: tail.trim_start().starts_with("username/password"),
+            challenge: parse_static_challenge(tail),
         }));
     }
     if let Some(rest) = msg.strip_prefix("FATAL:") {
         return Some(Event::Log(format!("FATAL: {rest}")));
     }
     None
+}
+
+/// Whether a comma-separated flag list such as `R,E` contains `flag`.
+fn has_flag(flags: &str, flag: char) -> bool {
+    flags.split(',').any(|f| f.trim() == flag.to_string())
+}
+
+/// `SC:<flag>,<text>` at the end of a password request. The low bit of the flag
+/// asks for the response to be echoed, the next bit asks for plain concatenation
+/// instead of the SCRV1 encoding.
+fn parse_static_challenge(tail: &str) -> Option<Challenge> {
+    let (_, rest) = tail.split_once("SC:")?;
+    let (flag, text) = rest.split_once(',')?;
+    let flag: u32 = flag.trim().parse().ok()?;
+    Some(Challenge::Static { echo: flag & 1 != 0, concat: flag & 2 != 0, text: text.to_string() })
+}
+
+/// `<flags>:<state_id>:<username_base64>:<challenge_text>`, where the text may
+/// itself contain colons.
+fn parse_crv1(rest: &str) -> Option<Challenge> {
+    let mut parts = rest.splitn(4, ':');
+    let flags = parts.next()?;
+    let state = parts.next()?;
+    let _username = parts.next()?;
+    let text = parts.next()?;
+    Some(Challenge::Dynamic {
+        echo: has_flag(flags, 'E'),
+        required: has_flag(flags, 'R'),
+        state: state.to_string(),
+        text: text.to_string(),
+    })
 }
 
 fn spawn_log_reader(pipe: impl Read + Send + 'static, emit: Emit) -> thread::JoinHandle<()> {
@@ -243,6 +340,22 @@ fn quote(s: &str) -> String {
         out.push(c);
     }
     out.push('"');
+    out
+}
+
+/// Base64, as the challenge/response protocol wants passwords and codes encoded.
+fn base64(data: &str) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let bytes = data.as_bytes();
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let n = u32::from(b[0]) << 16 | u32::from(b[1]) << 8 | u32::from(b[2]);
+        out.push(ALPHABET[(n >> 18) as usize & 63] as char);
+        out.push(ALPHABET[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 { ALPHABET[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 2 { ALPHABET[n as usize & 63] as char } else { '=' });
+    }
     out
 }
 
@@ -383,6 +496,157 @@ mod tests {
         assert!(matches!(parse_message("BYTECOUNT:1024,2048"), Some(Event::Bytes { rx: 1024, tx: 2048 })));
     }
 
+    /// The line the TimeWeb server actually sends, taken from a real connection log.
+    #[test]
+    fn parses_static_challenge() {
+        let Some(Event::NeedAuth(req)) = parse_message("PASSWORD:Need 'Auth' username/password SC:1,Enter code") else {
+            panic!("expected auth request");
+        };
+        assert_eq!(req.realm, "Auth");
+        assert!(req.needs_username);
+        assert_eq!(
+            req.challenge,
+            Some(Challenge::Static { echo: true, concat: false, text: "Enter code".to_string() })
+        );
+
+        // FORMAT=1 asks for the response to be glued to the password instead.
+        let Some(Event::NeedAuth(req)) = parse_message("PASSWORD:Need 'Auth' username/password SC:2,Enter code") else {
+            panic!("expected auth request");
+        };
+        assert_eq!(
+            req.challenge,
+            Some(Challenge::Static { echo: false, concat: true, text: "Enter code".to_string() })
+        );
+
+        // A preferred username may precede the challenge.
+        let Some(Event::NeedAuth(req)) =
+            parse_message("PASSWORD:Need 'Auth' username/password UN:Y3Ix SC:1,Please enter token PIN")
+        else {
+            panic!("expected auth request");
+        };
+        assert_eq!(
+            req.challenge,
+            Some(Challenge::Static { echo: true, concat: false, text: "Please enter token PIN".to_string() })
+        );
+    }
+
+    #[test]
+    fn parses_dynamic_challenge() {
+        let Some(Event::Challenge(Challenge::Dynamic { echo, required, state, text })) = parse_message(
+            "PASSWORD:Verification Failed: 'Auth' ['CRV1:R,E:Om01u7Fh4LrGBS7uh0SWmzwabUiGiW6l:Y3Ix:Please enter token PIN']",
+        ) else {
+            panic!("expected a dynamic challenge");
+        };
+        assert!(echo);
+        assert!(required);
+        assert_eq!(state, "Om01u7Fh4LrGBS7uh0SWmzwabUiGiW6l");
+        assert_eq!(text, "Please enter token PIN");
+
+        // The challenge text may contain colons.
+        let Some(Event::Challenge(Challenge::Dynamic { text, .. })) =
+            parse_message("PASSWORD:Verification Failed: 'Auth' ['CRV1:R:abc:Y3Ix:Code: 123456']")
+        else {
+            panic!("expected a dynamic challenge");
+        };
+        assert_eq!(text, "Code: 123456");
+
+        // Without a CRV1 payload it stays a plain failure.
+        assert!(matches!(parse_message("PASSWORD:Verification Failed: 'Auth'"), Some(Event::AuthFailed)));
+    }
+
+    #[test]
+    fn parses_crtext_challenge() {
+        let Some(Event::Challenge(Challenge::CrText { echo, required, text })) =
+            parse_message("INFOMSG:CR_TEXT:R,E:Please enter token PIN")
+        else {
+            panic!("expected a crtext challenge");
+        };
+        assert!(echo);
+        assert!(required);
+        assert_eq!(text, "Please enter token PIN");
+
+        assert!(parse_message("INFOMSG:NOTIFY::Checking your account").is_none());
+    }
+
+    #[test]
+    fn parses_auth_pending() {
+        assert!(matches!(
+            parse_message("STATE:1794353029,AUTH_PENDING,60,,,,,"),
+            Some(Event::AuthPending { timeout: Some(60) })
+        ));
+        assert!(matches!(
+            parse_message("STATE:1794353029,AUTH_PENDING,,,,,,"),
+            Some(Event::AuthPending { timeout: None })
+        ));
+    }
+
+    #[test]
+    fn encodes_base64() {
+        assert_eq!(base64(""), "");
+        assert_eq!(base64("f"), "Zg==");
+        assert_eq!(base64("fo"), "Zm8=");
+        assert_eq!(base64("foo"), "Zm9v");
+        // The examples from the management interface documentation.
+        assert_eq!(base64("bar"), "YmFy");
+        assert_eq!(base64("8675309"), "ODY3NTMwOQ==");
+    }
+
+    #[test]
+    fn builds_challenge_responses() {
+        let shared = Arc::new(Shared {
+            mgmt: Mutex::new(None),
+            stop_requested: AtomicBool::new(false),
+            exited: AtomicBool::new(false),
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (stream, _) = listener.accept().unwrap();
+        *shared.mgmt.lock().unwrap() = Some(stream);
+        let session = Session { shared };
+        let mut input = BufReader::new(client).lines().map(Result::unwrap);
+
+        let static_req = AuthRequest {
+            realm: "Auth".into(),
+            needs_username: true,
+            challenge: Some(Challenge::Static { echo: true, concat: false, text: "Enter code".into() }),
+        };
+        session.send_auth(&static_req, "foo", "bar", "8675309");
+        assert_eq!(input.next().unwrap(), r#"username "Auth" "foo""#);
+        assert_eq!(input.next().unwrap(), r#"password "Auth" "SCRV1:YmFy:ODY3NTMwOQ==""#);
+
+        let concat_req = AuthRequest {
+            realm: "Auth".into(),
+            needs_username: true,
+            challenge: Some(Challenge::Static { echo: false, concat: true, text: "Enter code".into() }),
+        };
+        session.send_auth(&concat_req, "foo", "bar", "8675309");
+        assert_eq!(input.next().unwrap(), r#"username "Auth" "foo""#);
+        assert_eq!(input.next().unwrap(), r#"password "Auth" "bar8675309""#);
+
+        let dynamic_req = AuthRequest {
+            realm: "Auth".into(),
+            needs_username: true,
+            challenge: Some(Challenge::Dynamic {
+                echo: true,
+                required: true,
+                state: "Om01u7Fh4LrGBS7uh0SWmzwabUiGiW6l".into(),
+                text: "Please enter token PIN".into(),
+            }),
+        };
+        session.send_auth(&dynamic_req, "cr1", "bar", "8675309");
+        assert_eq!(input.next().unwrap(), r#"username "Auth" "cr1""#);
+        assert_eq!(input.next().unwrap(), r#"password "Auth" "CRV1::Om01u7Fh4LrGBS7uh0SWmzwabUiGiW6l::8675309""#);
+
+        session.send_cr_response("8675309");
+        assert_eq!(input.next().unwrap(), "cr-response ODY3NTMwOQ==");
+
+        // Without a challenge the password goes out untouched.
+        let plain = AuthRequest { realm: "Auth".into(), needs_username: true, challenge: None };
+        session.send_auth(&plain, "foo", "bar", "");
+        assert_eq!(input.next().unwrap(), r#"username "Auth" "foo""#);
+        assert_eq!(input.next().unwrap(), r#"password "Auth" "bar""#);
+    }
+
     #[test]
     fn talks_to_management_interface() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -416,7 +680,7 @@ mod tests {
         let Event::NeedAuth(req) = rx.recv().unwrap() else { panic!("expected auth request") };
 
         let session = Session { shared: shared.clone() };
-        session.send_auth(&req, "bryan", "p\"w");
+        session.send_auth(&req, "bryan", "p\"w", "");
         assert_eq!(input.next().unwrap(), r#"username "Auth" "bryan""#);
         assert_eq!(input.next().unwrap(), r#"password "Auth" "p\"w""#);
 

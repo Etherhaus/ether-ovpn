@@ -1,2 +1,6 @@
 target/
 dist/
+
+# OpenVPN profiles carry private keys and server addresses: never commit them.
+*.ovpn
+*.conf

@@ -6,23 +6,54 @@
 
 <p align="center">
   A small desktop client for OpenVPN on Linux, written in Rust with <a href="https://slint.dev">Slint</a>.
-  Import the <code>.ovpn</code> profile from your OpenVPN server and connect with one click.
-  Works with OpenVPN 2.4 or newer.
+  Import the <code>.ovpn</code> profiles from your OpenVPN server and connect with one click.
+  Works with OpenVPN 2.4 or newer, including servers that ask for a 2FA code.
 </p>
 
 ![VPNdeck connected to a VPN](docs/screenshot.png)
 
+| Dark | Light |
+|---|---|
+| ![VPNdeck in dark mode](docs/screenshot-dark.png) | ![VPNdeck in light mode](docs/screenshot-light.png) |
+
 ## Features
 
-- Import `.ovpn` profiles (stored privately under `~/.config/vpndeck`)
+- Import one or many `.ovpn` profiles at once (stored privately under `~/.config/vpndeck`).
+  Files that are already in the list are skipped, so re-importing a folder is safe
+- Search the profile list once it grows past a handful of servers
 - Connect / disconnect with live status, VPN address, server and traffic counters
 - Username/password and private-key password prompts. The username is remembered, and the
   password can be saved in your desktop keyring (GNOME Keyring / KWallet) for automatic sign-in
+- Two-factor authentication: static challenge, CRV1 and crtext (see below)
+- English and Russian, dark and light themes, both switchable in Settings
 - Live OpenVPN log
 - System tray icon showing connection status, with quick connect/disconnect.
   Closing the window keeps VPNdeck running in the tray.
 - Checks GitHub for new releases and updates itself (tarball in place, .deb through apt, Flatpak through flatpak)
 - Applies DNS pushed by the server when `update-systemd-resolved` or `update-resolv-conf` is installed
+
+## Two-factor authentication
+
+VPNdeck answers every challenge/response variant OpenVPN servers use:
+
+| The server asks for | VPNdeck sends |
+|---|---|
+| `--static-challenge` (SCRV1) | `SCRV1:<base64 password>:<base64 code>` |
+| `--static-challenge` with FORMAT=1 | the code appended to the password |
+| A CRV1 dynamic challenge | `CRV1::<state>::<code>` on the next attempt |
+| crtext (OpenVPN 2.5+) | `cr-response <base64 code>` while authentication is pending |
+
+It announces `IV_SSO=crtext` at startup, because servers that check it never send a crtext
+challenge otherwise. When the password is already in the keyring, the dialog asks only for the
+code. The wire format is OpenVPN's own
+[management-notes.txt](https://github.com/OpenVPN/openvpn/blob/master/doc/management-notes.txt).
+
+## Languages
+
+The interface is available in English and Russian. The first start follows the desktop locale
+(`LANG`), and Settings switches it at any time; the choice is stored in
+`~/.config/vpndeck/settings.json`. Every string lives in `src/i18n.rs`, so adding a language is
+one more column in that table.
 
 ## Requirements
 
@@ -88,8 +119,9 @@ release for the tag before pushing it.
 
 ## Getting started
 
-Download the client configuration (`.ovpn` file) from your OpenVPN server, then click
-**+ Import** in VPNdeck and pick the file.
+Download the client configuration (`.ovpn` files) from your OpenVPN server, then click
+**+ Import** in VPNdeck and pick one or more files. On a fresh install the same button sits in
+the middle of the window.
 
 ## License
 

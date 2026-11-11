@@ -4,6 +4,8 @@ use ksni::blocking::{Handle, TrayMethods};
 use ksni::menu::{StandardItem, SubMenu};
 use ksni::{Icon, MenuItem, ToolTip};
 
+use crate::i18n::{Lang, Strings};
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum Status {
     #[default]
@@ -29,6 +31,7 @@ pub struct State {
     pub profiles: Vec<String>,
     pub busy: bool,
     pub update: Option<String>,
+    pub lang: Lang,
 }
 
 pub struct Tray {
@@ -80,13 +83,14 @@ impl ksni::Tray for Tray {
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
         let s = &self.state;
+        let t = Strings::new(s.lang);
         let mut menu = vec![
             StandardItem { label: s.status_text.clone(), enabled: false, ..Default::default() }.into(),
             MenuItem::Separator,
-            item("Show VPNdeck", true, || Command::ShowWindow),
+            item(t.tray_show, true, || Command::ShowWindow),
         ];
         if s.busy {
-            menu.push(item("Disconnect", true, || Command::Disconnect));
+            menu.push(item(t.disconnect, true, || Command::Disconnect));
         } else {
             let submenu = s
                 .profiles
@@ -101,14 +105,14 @@ impl ksni::Tray for Tray {
                     .into()
                 })
                 .collect();
-            menu.push(SubMenu { label: "Connect".into(), enabled: !s.profiles.is_empty(), submenu, ..Default::default() }.into());
+            menu.push(SubMenu { label: t.tray_connect.into(), enabled: !s.profiles.is_empty(), submenu, ..Default::default() }.into());
         }
         menu.push(MenuItem::Separator);
         match &s.update {
-            Some(version) => menu.push(item(format!("Update to {version}…"), true, || Command::ShowWindow)),
-            None => menu.push(item("Check for updates", true, || Command::CheckUpdates)),
+            Some(version) => menu.push(item(t.tray_update_to.replace("{}", version), true, || Command::ShowWindow)),
+            None => menu.push(item(t.tray_check_updates, true, || Command::CheckUpdates)),
         }
-        menu.push(item("Quit", true, || Command::Quit));
+        menu.push(item(t.tray_quit, true, || Command::Quit));
         menu
     }
 }

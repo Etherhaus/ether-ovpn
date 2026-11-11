@@ -17,6 +17,9 @@
       <li>Big, clear connection status with VPN address, server and traffic</li>
       <li>System tray icon for quick connect and disconnect</li>
       <li>Optional saved password in your desktop keyring for automatic sign-in</li>
+      <li>Two-factor authentication, including crtext on OpenVPN 2.5 and newer</li>
+      <li>Import several profiles at once and search the list</li>
+      <li>English and Russian, dark and light themes</li>
       <li>Connection log in its own window</li>
       <li>Updates itself from inside the app</li>
     </ul>
@@ -33,6 +36,9 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.2.0" date="2026-11-11">
+      <description><p>Adds two-factor authentication for static challenges, CRV1 and crtext, so servers that ask for a code now connect. Imports several .ovpn files at once and skips the ones already in the list, adds a profile search, an English and Russian interface, and a dark and light theme.</p></description>
+    </release>
     <release version="0.1.4" date="2026-11-02">
       <description><p>Fixes connections failing right after sign-in on Arch, Fedora and other distros when a profile asks for the Debian-only group nogroup. Also shows the VPNdeck icon on Wayland, makes links easier to read in dark mode and gives long profile names more room.</p></description>
     </release>

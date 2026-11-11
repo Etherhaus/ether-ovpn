@@ -1,6 +1,8 @@
+mod i18n;
 mod openvpn;
 mod profiles;
 mod secrets;
+mod settings;
 mod tray;
 mod updater;
 
@@ -12,10 +14,11 @@ use std::time::{Duration, Instant};
 
 use slint::{CloseRequestResponse, ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
+use i18n::{Lang, Strings};
+
 slint::include_modules!();
 
 const MAX_LOG_LINES: usize = 2000;
-const EMPTY_NOTICE: &str = "Import a .ovpn file to get started. Download it from your OpenVPN server.";
 
 /// Everything that reaches the UI thread from other threads.
 enum Msg {
@@ -32,6 +35,9 @@ enum Msg {
 
 struct App {
     store: profiles::Store,
+    settings: settings::Settings,
+    /// What the profile search box currently holds.
+    query: String,
     session: Option<openvpn::Session>,
     // Bumped per connection so events from an old openvpn process are ignored.
     session_id: u64,
@@ -39,6 +45,10 @@ struct App {
     connected_at: Option<Instant>,
     auth: Option<openvpn::AuthRequest>,
     auth_failed: bool,
+    /// A password read from the keyring, kept only while the 2FA code is typed.
+    saved_password: Option<String>,
+    /// A crtext challenge waiting for its response.
+    cr_challenge: Option<openvpn::Challenge>,
     // Passwords to save in the keyring once the connection proves they work.
     pending_save: Vec<(String, String)>,
     tx: mpsc::Sender<Msg>,
@@ -62,12 +72,16 @@ fn main() -> Result<(), slint::PlatformError> {
     };
     let app = Rc::new(RefCell::new(App {
         store: profiles::Store::load(),
+        settings: settings::Settings::load(),
+        query: String::new(),
         session: None,
         session_id: 0,
         active: None,
         connected_at: None,
         auth: None,
         auth_failed: false,
+        saved_password: None,
+        cr_challenge: None,
         pending_save: Vec::new(),
         tx: tx.clone(),
         tray,
@@ -82,15 +96,96 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.set_profiles(ModelRc::from(profile_model.clone()));
     log_window.set_lines(ModelRc::from(log_model.clone()));
     ui.set_version(updater::current_version().into());
-    sync_profiles(&ui, &app.borrow().store, &profile_model);
+    apply_theme(&ui, app.borrow().settings.dark());
+    let lang = app.borrow().settings.lang();
+    i18n::apply(&ui, lang);
+    ui.set_lang(lang.code().into());
+    ui.set_status_text(Strings::new(lang).state_idle.into());
+    sync_profiles(&ui, &app.borrow().store, &profile_model, &app.borrow().query);
     if !app.borrow().store.profiles.is_empty() {
         ui.set_selected(0);
     }
+    update_card_name(&ui, &app.borrow());
 
     ui.on_show_log({
         let log_weak = log_window.as_weak();
         move || {
             let _ = log_weak.unwrap().show();
+        }
+    });
+
+    ui.on_set_theme({
+        let ui_weak = ui.as_weak();
+        let app = app.clone();
+        move |dark| {
+            let ui = ui_weak.unwrap();
+            apply_theme(&ui, dark);
+            let mut app = app.borrow_mut();
+            app.settings.set_dark(dark);
+            if let Err(e) = app.settings.save() {
+                let t = Strings::new(app.settings.lang());
+                set_notice(&ui, i18n::fill(t.theme_save_failed, &[&e.to_string()]), true);
+            }
+        }
+    });
+
+    ui.on_set_language({
+        let ui_weak = ui.as_weak();
+        let app = app.clone();
+        let profile_model = profile_model.clone();
+        move |code| {
+            let ui = ui_weak.unwrap();
+            let mut app = app.borrow_mut();
+            let lang = Lang::from_code(&code);
+            app.settings.set_lang(lang);
+            if let Err(e) = app.settings.save() {
+                let t = Strings::new(lang);
+                set_notice(&ui, i18n::fill(t.language_save_failed, &[&e.to_string()]), true);
+            }
+            i18n::apply(&ui, lang);
+            ui.set_lang(lang.code().into());
+            // The status line is a live message, so only reset it when nothing runs.
+            if ui.get_conn_state() == ConnState::Idle {
+                ui.set_status_text(Strings::new(lang).state_idle.into());
+            }
+            sync_profiles(&ui, &app.store, &profile_model, &app.query);
+            update_card_name(&ui, &app);
+        }
+    });
+
+    ui.on_search_changed({
+        let ui_weak = ui.as_weak();
+        let app = app.clone();
+        let profile_model = profile_model.clone();
+        move |query| {
+            let ui = ui_weak.unwrap();
+            let mut app = app.borrow_mut();
+            app.query = query.to_string();
+            sync_profiles(&ui, &app.store, &profile_model, &app.query);
+        }
+    });
+
+    ui.on_select_profile({
+        let ui_weak = ui.as_weak();
+        let app = app.clone();
+        move |i| {
+            let ui = ui_weak.unwrap();
+            ui.set_selected(i);
+            update_card_name(&ui, &app.borrow());
+        }
+    });
+
+    ui.on_request_remove({
+        let ui_weak = ui.as_weak();
+        let app = app.clone();
+        move |i| {
+            let ui = ui_weak.unwrap();
+            let app = app.borrow();
+            let Some(profile) = app.store.profiles.get(i as usize) else { return };
+            let t = Strings::new(app.settings.lang());
+            ui.set_confirm_title(i18n::fill(t.remove_title, &[&profile.name]).into());
+            ui.set_confirm_saved_password(profile.saved_password);
+            ui.set_confirm_remove(i);
         }
     });
 
@@ -112,14 +207,16 @@ fn main() -> Result<(), slint::PlatformError> {
     // File dialogs run async so the event loop keeps going while they're open.
     log_window.on_save({
         let log_model = log_model.clone();
+        let app = app.clone();
         let saving = Rc::new(Cell::new(false));
         move || {
             if saving.replace(true) {
                 return;
             }
+            let title = Strings::new(app.borrow().settings.lang()).save_log_title;
             let (log_model, saving) = (log_model.clone(), saving.clone());
             let _ = slint::spawn_local(async move {
-                let file = rfd::AsyncFileDialog::new().set_title("Save log").set_file_name("vpndeck.log").save_file().await;
+                let file = rfd::AsyncFileDialog::new().set_title(title).set_file_name("vpndeck.log").save_file().await;
                 saving.set(false);
                 if let Some(file) = file {
                     let _ = std::fs::write(file.path(), log_text(&log_model));
@@ -142,24 +239,42 @@ fn main() -> Result<(), slint::PlatformError> {
             if picking.replace(true) {
                 return;
             }
+            let t = Strings::new(app.borrow().settings.lang());
             let (ui_weak, app, profile_model, picking) = (ui_weak.clone(), app.clone(), profile_model.clone(), picking.clone());
             let _ = slint::spawn_local(async move {
-                let file = rfd::AsyncFileDialog::new()
-                    .set_title("Import OpenVPN profile")
-                    .add_filter("OpenVPN profile", &["ovpn", "conf"])
-                    .pick_file()
+                let files = rfd::AsyncFileDialog::new()
+                    .set_title(t.import_title)
+                    .add_filter(t.import_filter, &["ovpn", "conf"])
+                    .pick_files()
                     .await;
                 picking.set(false);
-                let (Some(file), Some(ui)) = (file, ui_weak.upgrade()) else { return };
-                let path = file.path();
-                let mut app = app.borrow_mut();
-                match app.store.import(path) {
-                    Ok(i) => {
-                        sync_profiles(&ui, &app.store, &profile_model);
-                        ui.set_selected(i as i32);
-                    }
-                    Err(e) => ui.set_notice(format!("Could not import {}: {e}", path.display()).into()),
+                let (Some(files), Some(ui)) = (files, ui_weak.upgrade()) else { return };
+                if files.is_empty() {
+                    return;
                 }
+                let paths: Vec<PathBuf> = files.iter().map(|file| file.path().to_path_buf()).collect();
+                let mut app = app.borrow_mut();
+                let report = app.store.import_many(&paths);
+                let lang = app.settings.lang();
+                let t = Strings::new(lang);
+                let reasons: Vec<String> = report
+                    .skipped
+                    .iter()
+                    .map(|(_, reason)| match reason {
+                        profiles::SkipReason::Duplicate => t.import_duplicate.to_string(),
+                        profiles::SkipReason::NotProfile => t.import_not_ovpn.to_string(),
+                        profiles::SkipReason::Failed(e) => e.clone(),
+                    })
+                    .collect();
+                if !report.imported.is_empty() || !reasons.is_empty() {
+                    let summary = i18n::import_summary(lang, report.imported.len(), &reasons);
+                    set_notice(&ui, summary, report.imported.is_empty());
+                }
+                sync_profiles(&ui, &app.store, &profile_model, &app.query);
+                if let Some(first) = report.imported.first() {
+                    ui.set_selected(*first as i32);
+                }
+                update_card_name(&ui, &app);
             });
         }
     });
@@ -180,16 +295,20 @@ fn main() -> Result<(), slint::PlatformError> {
                     std::thread::spawn(move || secrets::forget_all(&profile.file));
                 }
                 Ok(_) => {}
-                Err(e) => ui.set_notice(format!("Could not remove the profile: {e}").into()),
+                Err(e) => {
+                    let t = Strings::new(app.settings.lang());
+                    set_notice(&ui, i18n::fill(t.remove_failed, &[&e.to_string()]), true);
+                }
             }
             if let Some(a) = app.active.filter(|a| *a > i) {
                 app.active = Some(a - 1);
             }
             ui.set_active(app.active.map_or(-1, |a| a as i32));
             ui.set_status_for(app.active.map_or(-1, |a| a as i32));
-            sync_profiles(&ui, &app.store, &profile_model);
+            sync_profiles(&ui, &app.store, &profile_model, &app.query);
             let len = app.store.profiles.len();
             ui.set_selected(if len == 0 { -1 } else { i.min(len - 1) as i32 });
+            update_card_name(&ui, &app);
         }
     });
 
@@ -221,11 +340,14 @@ fn main() -> Result<(), slint::PlatformError> {
                     app.pending_save.clear();
                     ui.set_active(i);
                     ui.set_conn_state(ConnState::Connecting);
-                    ui.set_status_text("Waiting for administrator authorization…".into());
+                    let t = Strings::new(app.settings.lang());
+                    ui.set_status_text(t.waiting_admin.into());
+                    update_card_name(&ui, &app);
                 }
                 Err(e) => {
+                    let t = Strings::new(app.settings.lang());
                     ui.set_conn_state(ConnState::Error);
-                    ui.set_status_text(format!("Could not start OpenVPN: {e}").into());
+                    ui.set_status_text(i18n::fill(t.start_failed, &[&e.to_string()]).into());
                 }
             }
         }
@@ -239,7 +361,8 @@ fn main() -> Result<(), slint::PlatformError> {
             if let Some(session) = &app.borrow().session {
                 session.disconnect();
                 ui.set_conn_state(ConnState::Disconnecting);
-                ui.set_status_text("Disconnecting…".into());
+                let t = Strings::new(app.borrow().settings.lang());
+                ui.set_status_text(t.disconnecting.into());
             }
         }
     });
@@ -247,29 +370,64 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.on_submit_auth({
         let ui_weak = ui.as_weak();
         let app = app.clone();
-        move |username, password| {
+        move |username, password, code| {
             let ui = ui_weak.unwrap();
             let mut app = app.borrow_mut();
             ui.set_auth_visible(false);
             ui.set_auth_password("".into());
+            ui.set_auth_code("".into());
+
+            // A crtext challenge is answered on its own, without a password prompt.
+            if app.cr_challenge.take().is_some() {
+                if let Some(session) = &app.session {
+                    session.send_cr_response(&code);
+                }
+                let t = Strings::new(app.settings.lang());
+                ui.set_status_text(t.checking_code.into());
+                return;
+            }
+
             let Some(req) = app.auth.take() else { return };
+            // With a saved password the dialog only asked for the code.
+            let from_keyring = app.saved_password.take();
+            let typed_password = from_keyring.is_none();
+            let username = match &from_keyring {
+                Some(_) => app.active.and_then(|a| app.store.profiles.get(a)).map(|p| p.username.clone()).unwrap_or_default(),
+                None => username.to_string(),
+            };
+            let password = from_keyring.unwrap_or_else(|| password.to_string());
             if let Some(session) = &app.session {
-                session.send_auth(&req, &username, &password);
+                session.send_auth(&req, &username, &password, &code);
             }
             let saved = app.active.and_then(|a| app.store.profiles.get(a)).filter(|p| p.saved_password).map(|p| p.file.clone());
-            if ui.get_auth_remember() {
-                app.pending_save.push((req.realm.clone(), password.to_string()));
-            } else if let Some(file) = saved {
-                forget_password(&app.tx, file);
+            if typed_password {
+                if ui.get_auth_remember() {
+                    app.pending_save.push((req.realm.clone(), password));
+                } else if let Some(file) = saved {
+                    forget_password(&app.tx, file);
+                }
             }
             if req.needs_username
                 && let Some(profile) = app.active.and_then(|a| app.store.profiles.get_mut(a))
-                && profile.username != username.as_str()
+                && profile.username != username
             {
-                profile.username = username.to_string();
+                profile.username = username;
                 let _ = app.store.save();
             }
-            ui.set_status_text("Signing in…".into());
+            let t = Strings::new(app.settings.lang());
+            ui.set_status_text(t.signing_in.into());
+        }
+    });
+
+    ui.on_change_password({
+        let ui_weak = ui.as_weak();
+        let app = app.clone();
+        move || {
+            let ui = ui_weak.unwrap();
+            let mut app = app.borrow_mut();
+            app.saved_password = None;
+            let Some(req) = app.auth.clone() else { return };
+            show_auth_dialog(&ui, &mut app, req, "");
         }
     });
 
@@ -291,11 +449,15 @@ fn main() -> Result<(), slint::PlatformError> {
             let mut app = app.borrow_mut();
             ui.set_auth_visible(false);
             ui.set_auth_password("".into());
+            ui.set_auth_code("".into());
             app.auth = None;
+            app.saved_password = None;
+            app.cr_challenge = None;
             if let Some(session) = &app.session {
                 session.disconnect();
                 ui.set_conn_state(ConnState::Disconnecting);
-                ui.set_status_text("Disconnecting…".into());
+                let t = Strings::new(app.settings.lang());
+                ui.set_status_text(t.disconnecting.into());
             }
         }
     });
@@ -323,7 +485,8 @@ fn main() -> Result<(), slint::PlatformError> {
                 Ok(install) => {
                     ui.set_update_state(UpdateState::Downloading);
                     ui.set_update_progress(0.0);
-                    ui.set_update_text(format!("Downloading VPNdeck {}…", release.version).into());
+                    let t = Strings::new(app.settings.lang());
+                    ui.set_update_text(i18n::fill(t.downloading, &[&release.version]).into());
                     let tx = tx.clone();
                     updater::spawn_install(install.clone(), release.assets, move |p| {
                         let _ = tx.send(Msg::UpdateProgress(p));
@@ -400,7 +563,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     // Run through the UI's own callbacks, which borrow `app` themselves.
                     Msg::Tray(command) => handle_tray_command(&ui, command),
                     Msg::UpdateChecked { status, silent } => handle_update_status(&ui, &mut app.borrow_mut(), status, silent),
-                    Msg::UpdateProgress(progress) => handle_update_progress(&ui, progress),
+                    Msg::UpdateProgress(progress) => handle_update_progress(&ui, progress, app.borrow().settings.lang()),
                     Msg::SavedPassword { session, req, result } => {
                         let mut app = app.borrow_mut();
                         if session == app.session_id {
@@ -415,11 +578,12 @@ fn main() -> Result<(), slint::PlatformError> {
                                     profile.saved_password = saved;
                                 }
                                 let _ = app.store.save();
-                                sync_profiles(&ui, &app.store, &profile_model);
+                                sync_profiles(&ui, &app.store, &profile_model, &app.query);
                             }
                             Err(e) => {
-                                let action = if saved { "save" } else { "forget" };
-                                ui.set_notice(format!("Couldn't {action} the password in your keyring: {e}").into());
+                                let t = Strings::new(app.settings.lang());
+                                let template = if saved { t.keyring_save_failed } else { t.keyring_forget_failed };
+                                set_notice(&ui, i18n::fill(template, &[&e.to_string()]), true);
                             }
                         }
                     }
@@ -448,6 +612,11 @@ fn main() -> Result<(), slint::PlatformError> {
 /// files have to be reached through `flatpak-spawn --host` and /run/host.
 pub fn sandboxed() -> bool {
     std::env::var_os("FLATPAK_ID").is_some()
+}
+
+/// Switches the app's palette. The widgets are the app's own, so this is all it takes.
+fn apply_theme(ui: &AppWindow, dark: bool) {
+    ui.global::<Theme>().set_dark(dark);
 }
 
 fn check_for_updates(tx: mpsc::Sender<Msg>, silent: bool) {
@@ -487,46 +656,48 @@ fn handle_update_status(ui: &AppWindow, app: &mut App, status: updater::UpdateSt
         UpdateStatus::Available(release) => {
             ui.set_update_state(UpdateState::Available);
             ui.set_update_note("".into());
+            let t = Strings::new(app.settings.lang());
             let password = match updater::Install::detect() {
-                Ok(install) if install.asks_for_password() => " You'll be asked for your password.",
+                Ok(install) if install.asks_for_password() => t.update_password_note,
                 _ => "",
             };
-            ui.set_update_text(
-                format!("VPNdeck {} is available (you have {}).{password}", release.version, updater::current_version()).into(),
-            );
+            let text = i18n::fill(t.update_available, &[&release.version, updater::current_version()]);
+            ui.set_update_text(format!("{text}{password}").into());
             app.release = Some(release);
         }
         UpdateStatus::UpToDate => {
             ui.set_update_state(UpdateState::Idle);
             if !silent {
-                ui.set_update_note("You're up to date.".into());
+                ui.set_update_note(Strings::new(app.settings.lang()).up_to_date.into());
             }
         }
         UpdateStatus::Failed(e) => {
             ui.set_update_state(UpdateState::Idle);
             if !silent {
-                ui.set_update_note(format!("Couldn't check: {e}").into());
+                let t = Strings::new(app.settings.lang());
+                ui.set_update_note(i18n::fill(t.update_check_failed, &[&e]).into());
             }
         }
     }
 }
 
-fn handle_update_progress(ui: &AppWindow, progress: updater::Progress) {
+fn handle_update_progress(ui: &AppWindow, progress: updater::Progress, lang: Lang) {
     use updater::Progress;
     match progress {
         Progress::Downloading(fraction) => ui.set_update_progress(fraction),
         Progress::Installing => {
             ui.set_update_state(UpdateState::Installing);
-            ui.set_update_text("Installing the update…".into());
+            ui.set_update_text(Strings::new(lang).installing.into());
         }
         Progress::Done => {
             ui.set_update_state(UpdateState::Done);
-            let note = if ui.get_active() >= 0 { " Restarting will disconnect the VPN." } else { "" };
-            ui.set_update_text(format!("The update is installed. Restart VPNdeck to start using it.{note}").into());
+            let t = Strings::new(lang);
+            let note = if ui.get_active() >= 0 { t.update_done_busy } else { "" };
+            ui.set_update_text(format!("{}{note}", t.update_done).into());
         }
         Progress::Failed(e) => {
             ui.set_update_state(UpdateState::Failed);
-            ui.set_update_text(format!("The update failed: {e}").into());
+            ui.set_update_text(i18n::fill(Strings::new(lang).update_failed, &[&e]).into());
         }
     }
 }
@@ -541,10 +712,12 @@ fn sync_tray(ui: &AppWindow, app: &mut App) {
         ConnState::Error => tray::Status::Error,
         ConnState::Idle => tray::Status::Idle,
     };
+    let lang = app.settings.lang();
+    let t = Strings::new(lang);
     let profile_name = app.active.and_then(|a| app.store.profiles.get(a)).map(|p| p.name.as_str());
     let status_text = match (status, profile_name) {
-        (tray::Status::Connected, Some(name)) => format!("Connected to {name}"),
-        (tray::Status::Idle, _) => "Disconnected".to_string(),
+        (tray::Status::Connected, Some(name)) => i18n::fill(t.tray_connected_to, &[name]),
+        (tray::Status::Idle, _) => t.tray_disconnected.to_string(),
         _ => ui.get_status_text().to_string(),
     };
     let update = match ui.get_update_state() {
@@ -557,6 +730,7 @@ fn sync_tray(ui: &AppWindow, app: &mut App) {
         profiles: app.store.profiles.iter().map(|p| p.name.clone()).collect(),
         busy,
         update,
+        lang,
     };
     if state != app.tray_state {
         tray::set_state(handle, state.clone());
@@ -566,6 +740,7 @@ fn sync_tray(ui: &AppWindow, app: &mut App) {
 
 fn handle_event(ui: &AppWindow, log_window: &LogWindow, app: &mut App, log_model: &VecModel<SharedString>, event: openvpn::Event) {
     use openvpn::Event;
+    let t = Strings::new(app.settings.lang());
     match event {
         Event::Log(line) => {
             if log_model.row_count() >= MAX_LOG_LINES {
@@ -591,14 +766,14 @@ fn handle_event(ui: &AppWindow, log_window: &LogWindow, app: &mut App, log_model
                     if let Some(file) = file {
                         save_passwords(&app.tx, file, std::mem::take(&mut app.pending_save));
                     }
-                    (ConnState::Connected, "Connected".to_string())
+                    (ConnState::Connected, t.state_connected.to_string())
                 }
                 "RECONNECTING" => {
                     app.connected_at = None;
-                    (ConnState::Connecting, "Reconnecting…".to_string())
+                    (ConnState::Connecting, t.reconnecting.to_string())
                 }
-                "EXITING" => (ConnState::Disconnecting, "Disconnecting…".to_string()),
-                other => (ConnState::Connecting, format!("Connecting… ({})", other.to_lowercase().replace('_', " "))),
+                "EXITING" => (ConnState::Disconnecting, t.disconnecting.to_string()),
+                other => (ConnState::Connecting, i18n::fill(t.connecting_to, &[&other.to_lowercase().replace('_', " ")])),
             };
             ui.set_conn_state(state);
             ui.set_status_text(text.into());
@@ -611,7 +786,7 @@ fn handle_event(ui: &AppWindow, log_window: &LogWindow, app: &mut App, log_model
             let profile = app.active.and_then(|a| app.store.profiles.get(a));
             // After a failed attempt the saved password is evidently wrong, so ask instead.
             if let Some(file) = profile.filter(|p| p.saved_password && !app.auth_failed).map(|p| p.file.clone()) {
-                ui.set_status_text("Signing in with your saved password…".into());
+                ui.set_status_text(t.signing_in_saved.into());
                 let (tx, session) = (app.tx.clone(), app.session_id);
                 std::thread::spawn(move || {
                     let result = secrets::load(&file, &req.realm);
@@ -620,11 +795,19 @@ fn handle_event(ui: &AppWindow, log_window: &LogWindow, app: &mut App, log_model
                 return;
             }
             let error = match (app.auth_failed, profile.is_some_and(|p| p.saved_password)) {
-                (true, true) => "Your saved password didn't work. Enter it again.",
-                (true, false) => "That didn't work. Check your username and password and try again.",
+                (true, true) => t.saved_password_failed,
+                (true, false) => t.auth_failed,
                 _ => "",
             };
             show_auth_dialog(ui, app, req, error);
+        }
+        Event::Challenge(challenge) => show_code_dialog(ui, app, challenge),
+        Event::AuthPending { timeout } => {
+            let text = match timeout {
+                Some(seconds) => i18n::fill(t.auth_pending_timeout, &[&seconds.to_string()]),
+                None => t.auth_pending.to_string(),
+            };
+            ui.set_status_text(text.into());
         }
         Event::AuthFailed => {
             app.auth_failed = true;
@@ -635,6 +818,8 @@ fn handle_event(ui: &AppWindow, log_window: &LogWindow, app: &mut App, log_model
             app.active = None;
             app.connected_at = None;
             app.auth = None;
+            app.saved_password = None;
+            app.cr_challenge = None;
             ui.set_active(-1);
             ui.set_auth_visible(false);
             reset_stats(ui);
@@ -645,7 +830,7 @@ fn handle_event(ui: &AppWindow, log_window: &LogWindow, app: &mut App, log_model
                 }
                 None => {
                     ui.set_conn_state(ConnState::Idle);
-                    ui.set_status_text("Disconnected".into());
+                    ui.set_status_text(t.state_idle.into());
                 }
             }
         }
@@ -653,35 +838,80 @@ fn handle_event(ui: &AppWindow, log_window: &LogWindow, app: &mut App, log_model
 }
 
 fn show_auth_dialog(ui: &AppWindow, app: &mut App, req: openvpn::AuthRequest, error: &str) {
-    let title = if req.needs_username {
-        "Sign in to the VPN".to_string()
+    // With a password from the keyring only the 2FA code is missing.
+    let t = Strings::new(app.settings.lang());
+    let code_only = app.saved_password.is_some();
+    let title = if code_only {
+        t.enter_code.to_string()
+    } else if req.needs_username {
+        t.sign_in_vpn.to_string()
     } else {
-        format!("Enter the {} password", req.realm.to_lowercase())
+        i18n::fill(t.enter_password, &[&req.realm.to_lowercase()])
     };
     let profile = app.active.and_then(|a| app.store.profiles.get(a));
     ui.set_auth_title(title.into());
-    ui.set_auth_needs_username(req.needs_username);
+    ui.set_auth_needs_username(req.needs_username && !code_only);
+    ui.set_auth_needs_password(!code_only);
+    ui.set_auth_needs_code(req.challenge.is_some());
+    ui.set_auth_challenge_text(req.challenge.as_ref().map(challenge_text).unwrap_or_default().into());
+    ui.set_auth_password_saved(code_only);
     ui.set_auth_username(profile.map(|p| p.username.clone()).unwrap_or_default().into());
     ui.set_auth_remember(profile.is_some_and(|p| p.saved_password));
     ui.set_auth_error(error.into());
+    ui.set_auth_code("".into());
     ui.set_auth_visible(true);
-    ui.set_status_text("Waiting for your credentials…".into());
+    ui.set_status_text(t.waiting_credentials.into());
     // The window may be hidden in the tray; the prompt needs to be seen.
     let _ = ui.show();
     app.auth = Some(req);
+}
+
+/// A crtext challenge arrives while authentication is pending, so there is no
+/// password prompt to attach it to.
+fn show_code_dialog(ui: &AppWindow, app: &mut App, challenge: openvpn::Challenge) {
+    let t = Strings::new(app.settings.lang());
+    ui.set_auth_title(t.enter_code.into());
+    ui.set_auth_needs_username(false);
+    ui.set_auth_needs_password(false);
+    ui.set_auth_needs_code(true);
+    ui.set_auth_challenge_text(challenge_text(&challenge).into());
+    ui.set_auth_password_saved(false);
+    ui.set_auth_error("".into());
+    ui.set_auth_code("".into());
+    ui.set_auth_visible(true);
+    ui.set_status_text(t.waiting_code.into());
+    let _ = ui.show();
+    app.cr_challenge = Some(challenge);
+}
+
+fn challenge_text(challenge: &openvpn::Challenge) -> &str {
+    match challenge {
+        openvpn::Challenge::Static { text, .. }
+        | openvpn::Challenge::Dynamic { text, .. }
+        | openvpn::Challenge::CrText { text, .. } => text,
+    }
 }
 
 fn use_saved_password(ui: &AppWindow, app: &mut App, req: openvpn::AuthRequest, result: Result<Option<String>, String>) {
     let username = app.active.and_then(|a| app.store.profiles.get(a)).map(|p| p.username.clone()).unwrap_or_default();
     match result {
         Ok(Some(password)) if !req.needs_username || !username.is_empty() => {
-            if let Some(session) = &app.session {
-                session.send_auth(&req, &username, &password);
+            if req.challenge.is_some() {
+                // The code is still needed, so keep the password for the dialog.
+                app.saved_password = Some(password);
+                show_auth_dialog(ui, app, req, "");
+            } else if let Some(session) = &app.session {
+                session.send_auth(&req, &username, &password, "");
+                let t = Strings::new(app.settings.lang());
+                ui.set_status_text(t.signing_in.into());
             }
-            ui.set_status_text("Signing in…".into());
         }
         Ok(_) => show_auth_dialog(ui, app, req, ""),
-        Err(e) => show_auth_dialog(ui, app, req, &format!("Couldn't read your saved password: {e}")),
+        Err(e) => {
+            let t = Strings::new(app.settings.lang());
+            let message = i18n::fill(t.saved_password_read_failed, &[&e]);
+            show_auth_dialog(ui, app, req, &message)
+        }
     }
 }
 
@@ -704,15 +934,35 @@ fn forget_password(tx: &mpsc::Sender<Msg>, file: PathBuf) {
     });
 }
 
-fn sync_profiles(ui: &AppWindow, store: &profiles::Store, model: &VecModel<ProfileInfo>) {
-    model.set_vec(
-        store
-            .profiles
-            .iter()
-            .map(|p| ProfileInfo { name: p.name.as_str().into(), saved_password: p.saved_password })
-            .collect::<Vec<_>>(),
-    );
-    ui.set_notice(if store.profiles.is_empty() { EMPTY_NOTICE.into() } else { "".into() });
+/// Rebuilds the visible list, keeping each row's index in the store.
+fn sync_profiles(ui: &AppWindow, store: &profiles::Store, model: &VecModel<ProfileInfo>, query: &str) {
+    let needle = query.trim().to_lowercase();
+    let rows: Vec<ProfileInfo> = store
+        .profiles
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| needle.is_empty() || p.name.to_lowercase().contains(&needle))
+        .map(|(index, p)| ProfileInfo { index: index as i32, name: p.name.as_str().into(), saved_password: p.saved_password })
+        .collect();
+    model.set_vec(rows);
+    ui.set_profile_count(store.profiles.len() as i32);
+}
+
+/// Keeps the status card's profile name in step with the selection.
+fn update_card_name(ui: &AppWindow, app: &App) {
+    let index = if ui.get_active() >= 0 { ui.get_active() } else { ui.get_selected() };
+    let name = usize::try_from(index)
+        .ok()
+        .and_then(|i| app.store.profiles.get(i))
+        .map(|p| p.name.as_str())
+        .unwrap_or("");
+    ui.set_card_name(name.into());
+}
+
+/// Shows a message under the profile list, coloured by whether it reports a failure.
+fn set_notice(ui: &AppWindow, text: impl Into<SharedString>, error: bool) {
+    ui.set_notice(text.into());
+    ui.set_notice_error(error);
 }
 
 fn log_text(model: &VecModel<SharedString>) -> String {

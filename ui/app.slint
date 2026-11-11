@@ -1,26 +1,120 @@
-import { Button, CheckBox, LineEdit, ListView, Palette, ProgressIndicator } from "std-widgets.slint";
+import { ListView } from "std-widgets.slint";
 
 export enum ConnState { idle, connecting, connected, disconnecting, error }
 
 export struct ProfileInfo {
+    // Index in the store, so a filtered list still maps back to the right profile.
+    index: int,
     name: string,
     saved-password: bool,
 }
 
 export enum UpdateState { idle, checking, available, downloading, installing, done, failed }
 
-// The indigo of the app icon.
-global Theme {
-    out property <color> accent: #4B4FD8;
-    out property <color> accent-hover: #3B3FC4;
-    out property <brush> accent-gradient: @linear-gradient(135deg, #6D7CFF 0%, #3127A8 100%);
-    out property <color> green: #22A35A;
-    out property <color> amber: #C98A0C;
-    out property <color> red: #D64545;
-    out property <color> muted: Palette.foreground.transparentize(0.45);
-    // The accent is too dark to read as text on a dark background, so links lighten there.
-    out property <color> link: Palette.color-scheme == ColorScheme.dark ? #8C91FF : root.accent;
-    out property <color> link-hover: Palette.color-scheme == ColorScheme.dark ? #B4B7FF : root.accent-hover;
+// Every user-visible string. Filled from Rust by i18n::apply, so the UI never
+// hardcodes text and a new language needs no change here.
+export global Labels {
+    in property <string> log;
+    in property <string> settings;
+
+    in property <string> whats-new;
+    in property <string> update-now;
+    in property <string> restart-app;
+    in property <string> dismiss;
+
+    in property <string> state-connected;
+    in property <string> state-connecting;
+    in property <string> state-disconnecting;
+    in property <string> state-error;
+    in property <string> state-idle;
+    in property <string> choose-profile;
+    in property <string> vpn-address;
+    in property <string> server;
+    in property <string> received;
+    in property <string> sent;
+
+    in property <string> connect;
+    in property <string> disconnect;
+
+    in property <string> profiles;
+    in property <string> import-label;
+    in property <string> import-profiles;
+    in property <string> password-saved;
+    in property <string> forget-password;
+    in property <string> remove;
+    in property <string> search-placeholder;
+
+    in property <string> empty-title;
+    in property <string> empty-hint;
+
+    in property <string> check-updates;
+    in property <string> checking;
+
+    in property <string> theme;
+    in property <string> dark;
+    in property <string> light;
+    in property <string> language;
+    in property <string> close;
+
+    in property <string> remove-body-saved;
+    in property <string> remove-body;
+    in property <string> cancel;
+
+    in property <string> password-saved-hint;
+    in property <string> username;
+    in property <string> password;
+    in property <string> code;
+    in property <string> remember-password;
+    in property <string> change-password;
+    in property <string> sign-in;
+    in property <string> continue-button;
+
+    in property <string> log-title;
+    in property <string> connection-log;
+    in property <string> copy-all;
+    in property <string> save;
+    in property <string> clear;
+    in property <string> log-empty;
+}
+
+// TimeWeb Cloud design tokens. Every colour, radius and shadow in the app comes
+// from here, so the palette can be changed in one place.
+export global Theme {
+    // Slint takes a single family, not a CSS fallback list. Swap this line when
+    // the Stem licence arrives; the system font covers the gap until then.
+    out property <string> font-family: "Inter";
+
+    in-out property <bool> dark: true;
+
+    out property <color> accent: #454CEE;
+    out property <color> accent-hover: #1D20EE;
+    // Indigo wash for selected rows and banners.
+    out property <color> accent-soft: dark ? #242B47 : #E4E6FD;
+
+    out property <color> bg: dark ? #050C26 : #F5F6FE;
+    out property <brush> window-bg: dark ? @linear-gradient(180deg, #181F38 0%, #050C26 100%) : #F5F6FE;
+    out property <color> surface: dark ? #181F38 : #FFFFFF;
+    out property <color> line: dark ? #242B47 : #E4E6FD;
+    out property <color> tint: dark ? #242B47 : #D8DBFA;
+
+    out property <color> text: dark ? #FFFFFF : #050C26;
+    out property <color> text-muted: dark ? #969CAF : #646B85;
+
+    out property <color> success: #1CC14D;
+    out property <color> error: #EA4335;
+    out property <color> warning: #FBBC05;
+
+    // 0 12px 32px rgba(37,23,121,0.06): soft and violet, never black.
+    out property <color> shadow: #2517790F;
+    out property <length> shadow-blur: 32px;
+
+    out property <length> radius-sm: 8px;
+    out property <length> radius-md: 12px;
+    out property <length> radius-lg: 16px;
+    out property <length> radius-xl: 24px;
+    out property <length> radius-2xl: 32px;
+
+    out property <duration> motion: 200ms;
 }
 
 // Lets Tab reach a clickable element and Enter or Space activate it.
@@ -40,7 +134,7 @@ component ActivationScope inherits FocusScope {
 // A dimmed overlay with a centered card. Escape cancels it.
 component Modal inherits Rectangle {
     callback cancel();
-    background: #00000088;
+    background: #050C2699;
     TouchArea { }
 
     FocusScope {
@@ -55,16 +149,19 @@ component Modal inherits Rectangle {
         }
 
         Rectangle {
-            width: min(380px, root.width - 32px);
+            width: min(400px, root.width - 32px);
             height: card.preferred-height;
-            background: Palette.background;
-            border-radius: 16px;
+            background: Theme.surface;
+            border-radius: Theme.radius-xl;
             border-width: 1px;
-            border-color: Palette.border;
+            border-color: Theme.line;
+            drop-shadow-color: Theme.shadow;
+            drop-shadow-blur: Theme.shadow-blur;
+            drop-shadow-offset-y: 12px;
 
             card := VerticalLayout {
-                padding: 20px;
-                spacing: 12px;
+                padding: 24px;
+                spacing: 14px;
                 @children
             }
         }
@@ -75,16 +172,17 @@ component BigButton inherits Rectangle {
     in property <string> text;
     in property <bool> enabled: true;
     in property <bool> primary: true;
-    in property <length> font-size: 18px;
+    in property <length> font-size: 16px;
     callback clicked();
 
-    min-height: 56px;
-    border-radius: 12px;
+    min-height: 48px;
+    border-radius: Theme.radius-md;
     opacity: root.enabled ? 1 : 0.45;
-    background: root.primary ? (area.has-hover && root.enabled ? Theme.accent-hover : Theme.accent-gradient)
-        : (area.has-hover && root.enabled ? Palette.alternate-background.darker(0.04) : Palette.alternate-background);
+    background: root.primary
+        ? (area.has-hover && root.enabled ? Theme.accent-hover : Theme.accent)
+        : (area.has-hover && root.enabled ? Theme.tint : Theme.surface);
     border-width: focus.has-focus ? 2px : root.primary ? 0 : 1px;
-    border-color: focus.has-focus ? Palette.foreground : Palette.border;
+    border-color: focus.has-focus ? Theme.accent : Theme.line;
     forward-focus: focus;
     accessible-role: button;
     accessible-label: root.text;
@@ -92,11 +190,13 @@ component BigButton inherits Rectangle {
         root.clicked();
     }
 
+    animate background { duration: Theme.motion; easing: ease-in-out; }
+
     Text {
         text: root.text;
         font-size: root.font-size;
         font-weight: 600;
-        color: root.primary ? #FFFFFF : Palette.foreground;
+        color: root.primary ? #FFFFFF : Theme.text;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -120,7 +220,7 @@ component BigButton inherits Rectangle {
 component Link inherits Text {
     in property <bool> enabled: true;
     callback clicked();
-    color: !root.enabled ? Theme.muted : link-area.has-hover ? Theme.link-hover : Theme.link;
+    color: !root.enabled ? Theme.text-muted : link-area.has-hover ? Theme.accent-hover : Theme.accent;
     font-weight: 600;
     accessible-role: button;
     accessible-label: root.text;
@@ -128,14 +228,16 @@ component Link inherits Text {
         root.clicked();
     }
 
+    animate color { duration: Theme.motion; easing: ease-in-out; }
+
     if focus.has-focus: Rectangle {
         x: -4px;
         y: -2px;
         width: parent.width + 8px;
         height: parent.height + 4px;
-        border-radius: 4px;
+        border-radius: Theme.radius-sm;
         border-width: 2px;
-        border-color: Theme.link;
+        border-color: Theme.accent;
     }
 
     focus := ActivationScope {
@@ -154,20 +256,116 @@ component Link inherits Text {
     }
 }
 
-component Stat inherits VerticalLayout {
-    in property <string> label;
+// A text field in the app's own style, so both themes look the same.
+component Field inherits Rectangle {
+    in property <string> placeholder;
+    in property <bool> password: false;
+    in-out property <string> text;
+    callback accepted();
+
+    height: 44px;
+    border-radius: Theme.radius-md;
+    background: Theme.dark ? Theme.bg : Theme.surface;
+    border-width: input.has-focus ? 2px : 1px;
+    border-color: input.has-focus ? Theme.accent : Theme.line;
+    forward-focus: input;
+
+    animate border-color { duration: Theme.motion; easing: ease-in-out; }
+
+    public function focus-input() {
+        input.focus();
+    }
+
+    // Clicks on the padding focus the field too; the input keeps its own clicks.
+    TouchArea {
+        clicked => {
+            input.focus();
+        }
+    }
+
+    input := TextInput {
+        x: 12px;
+        width: parent.width - 24px;
+        height: parent.height;
+        vertical-alignment: center;
+        single-line: true;
+        font-size: 15px;
+        color: Theme.text;
+        input-type: root.password ? InputType.password : InputType.text;
+        text <=> root.text;
+        accepted => {
+            root.accepted();
+        }
+    }
+
+    if root.text == "": Text {
+        x: 12px;
+        width: parent.width - 24px;
+        height: parent.height;
+        vertical-alignment: center;
+        font-size: 15px;
+        color: Theme.text-muted;
+        text: root.placeholder;
+    }
+}
+
+component Check inherits HorizontalLayout {
+    in property <string> text;
+    in-out property <bool> checked;
+    spacing: 8px;
+    height: 24px;
+    alignment: start;
+
+    Rectangle {
+        width: 18px;
+        height: 18px;
+        border-radius: 4px;
+        border-width: 1px;
+        border-color: root.checked ? Theme.accent : Theme.line;
+        background: root.checked ? Theme.accent : transparent;
+
+        animate background { duration: Theme.motion; easing: ease-in-out; }
+
+        if root.checked: Path {
+            x: 4px;
+            y: 5px;
+            width: 10px;
+            height: 8px;
+            commands: "M 0 4 L 3.5 7.5 L 10 0";
+            stroke: #FFFFFF;
+            stroke-width: 2px;
+            fill: transparent;
+        }
+    }
+
+    Text {
+        text: root.text;
+        font-size: 14px;
+        color: Theme.text;
+        vertical-alignment: center;
+    }
+
+    TouchArea {
+        clicked => {
+            root.checked = !root.checked;
+        }
+    }
+}
+
+component Stat inherits VerticalLayout {    in property <string> label;
     in property <string> value;
     spacing: 2px;
     Text {
         text: root.label;
-        font-size: 13px;
-        color: Theme.muted;
+        font-size: 12px;
+        color: Theme.text-muted;
     }
 
     Text {
         text: root.value;
-        font-size: 17px;
+        font-size: 16px;
         font-weight: 600;
+        color: Theme.text;
         overflow: elide;
     }
 }
@@ -182,11 +380,13 @@ component ProfileRow inherits Rectangle {
     callback remove();
     callback forget-password();
 
-    height: 52px;
-    border-radius: 10px;
-    background: root.selected ? Theme.accent.transparentize(0.88) : row-area.has-hover ? Palette.alternate-background : transparent;
-    border-width: root.selected ? 2px : 0;
+    height: 56px;
+    border-radius: Theme.radius-md;
+    background: root.selected ? Theme.accent-soft : row-area.has-hover ? Theme.tint : transparent;
+    border-width: root.selected ? 1px : 0;
     border-color: Theme.accent;
+
+    animate background { duration: Theme.motion; easing: ease-in-out; }
 
     row-area := TouchArea {
         mouse-cursor: pointer;
@@ -204,8 +404,9 @@ component ProfileRow inherits Rectangle {
             horizontal-stretch: 1;
             Text {
                 text: root.name;
-                font-size: 16px;
+                font-size: 15px;
                 font-weight: root.selected ? 600 : 400;
+                color: Theme.text;
                 overflow: elide;
             }
 
@@ -213,15 +414,15 @@ component ProfileRow inherits Rectangle {
             if root.saved-password || (root.selected && root.can-remove): HorizontalLayout {
                 spacing: 14px;
                 Text {
-                    text: root.saved-password ? "Password saved" : "";
+                    text: root.saved-password ? Labels.password-saved : "";
                     font-size: 12px;
-                    color: Theme.muted;
+                    color: Theme.text-muted;
                     vertical-alignment: center;
                     horizontal-stretch: 1;
                 }
 
                 if root.selected && root.saved-password: Link {
-                    text: "Forget password";
+                    text: Labels.forget-password;
                     font-size: 12px;
                     clicked => {
                         root.forget-password();
@@ -229,7 +430,7 @@ component ProfileRow inherits Rectangle {
                 }
 
                 if root.selected && root.can-remove: Link {
-                    text: "Remove";
+                    text: Labels.remove;
                     font-size: 12px;
                     clicked => {
                         root.remove();
@@ -238,14 +439,11 @@ component ProfileRow inherits Rectangle {
             }
         }
 
-        if root.connected: VerticalLayout {
-            alignment: center;
-            Rectangle {
-                width: 10px;
-                height: 10px;
-                border-radius: 5px;
-                background: Theme.green;
-            }
+        if root.connected: Rectangle {
+            width: 8px;
+            height: 8px;
+            border-radius: 4px;
+            background: Theme.success;
         }
     }
 }
@@ -253,36 +451,57 @@ component ProfileRow inherits Rectangle {
 export component AppWindow inherits Window {
     title: "VPNdeck";
     icon: @image-url("../assets/vpndeck-256.png");
-    preferred-width: 420px;
-    preferred-height: 700px;
+    preferred-width: 440px;
+    preferred-height: 720px;
     min-width: 360px;
-    min-height: 540px;
+    min-height: 560px;
     default-font-size: 15px;
+    default-font-family: Theme.font-family;
+    background: Theme.window-bg;
 
     in property <[ProfileInfo]> profiles;
+    // How many profiles exist, which is not the same as the filtered list above.
+    in property <int> profile-count;
     in-out property <int> selected: -1;
     // Index of the profile with a running openvpn process, or -1.
     in property <int> active: -1;
     // Index of the profile the status fields below describe, kept after it stops.
     in property <int> status-for: -1;
     in property <ConnState> conn-state: ConnState.idle;
-    in property <string> status-text: "Disconnected";
+    in property <string> status-text;
     in property <string> local-ip: "—";
     in property <string> remote: "—";
     in property <string> rx: "—";
     in property <string> tx: "—";
     in property <string> duration: "—";
     in property <string> notice;
+    // Whether the notice reports a failure, which colours the banner.
+    in property <bool> notice-error: false;
+    in-out property <string> search-query;
+    // "en" or "ru", so the language picker knows which button is active.
+    in property <string> lang;
 
     in property <bool> auth-visible;
     in property <bool> auth-needs-username: true;
+    in property <bool> auth-needs-password: true;
+    in property <bool> auth-needs-code: false;
+    // The challenge text the server sent, e.g. "Enter code".
+    in property <string> auth-challenge-text;
+    // The password comes from the keyring, so only the code is asked for.
+    in property <bool> auth-password-saved;
     in property <string> auth-title;
     in property <string> auth-error;
     in-out property <string> auth-username;
     in-out property <string> auth-password;
+    in-out property <string> auth-code;
     in-out property <bool> auth-remember;
     // Index of the profile whose removal is waiting for confirmation, or -1.
-    property <int> confirm-remove: -1;
+    in-out property <int> confirm-remove: -1;
+    // The name and keyring state of that profile, so the dialog doesn't have to
+    // index into the filtered list.
+    in property <string> confirm-title;
+    in property <bool> confirm-saved-password;
+    in-out property <bool> settings-visible: false;
 
     in property <string> version;
     in property <UpdateState> update-state: UpdateState.idle;
@@ -301,76 +520,108 @@ export component AppWindow inherits Window {
     callback import-profile();
     callback remove-profile(int);
     callback forget-password(int);
+    callback select-profile(int);
+    callback request-remove(int);
     callback connect(int);
     callback disconnect();
-    callback submit-auth(string, string);
+    callback submit-auth(string, string, string);
     callback cancel-auth();
+    callback change-password();
     callback show-log();
+    callback set-theme(bool);
+    callback set-language(string);
+    callback search-changed(string);
 
-    property <bool> has-selection: root.selected >= 0 && root.selected < root.profiles.length;
+    property <bool> has-selection: root.selected >= 0 && root.selected < root.profile-count;
     property <bool> busy: root.active >= 0;
     property <bool> can-check: root.update-state == UpdateState.idle || root.update-state == UpdateState.failed;
     // While a connection runs, the card always describes it, whichever row is selected.
     property <bool> shows-status: root.busy || (root.has-selection && root.selected == root.status-for);
     property <ConnState> shown-state: root.shows-status ? root.conn-state : ConnState.idle;
-    property <int> card-profile: root.busy ? root.active : root.selected;
-    property <string> card-name: root.card-profile >= 0 && root.card-profile < root.profiles.length ? root.profiles[root.card-profile].name : "";
-    property <color> state-color: root.shown-state == ConnState.connected ? Theme.green
-        : root.shown-state == ConnState.error ? Theme.red
-        : root.shown-state == ConnState.idle ? #8A8FA3
-        : Theme.amber;
+    // The name of the profile the card describes, filled in from Rust because the
+    // list above is filtered and its indices don't match the store.
+    in property <string> card-name;
+    property <color> state-color: root.shown-state == ConnState.connected ? Theme.success
+        : root.shown-state == ConnState.error ? Theme.error
+        : root.shown-state == ConnState.idle ? Theme.text-muted
+        : Theme.warning;
+
+    changed search-query => {
+        root.search-changed(root.search-query);
+    }
 
     VerticalLayout {
-        padding: 18px;
-        spacing: 14px;
+        padding: 20px;
+        spacing: 16px;
 
         HorizontalLayout {
             spacing: 10px;
             Image {
-                source: @image-url("../assets/vpndeck-256.png");
-                width: 32px;
-                height: 32px;
+                source: @image-url("../assets/shield.svg");
+                colorize: Theme.accent;
+                width: 28px;
+                height: 28px;
             }
 
             Text {
                 text: "VPNdeck";
-                font-size: 21px;
+                font-size: 20px;
                 font-weight: 700;
+                color: Theme.text;
                 vertical-alignment: center;
                 horizontal-stretch: 1;
             }
 
             Link {
-                text: "View log";
+                text: Labels.log;
+                font-size: 14px;
                 vertical-alignment: center;
                 clicked => {
                     root.show-log();
                 }
             }
+
+            Link {
+                text: Labels.settings;
+                font-size: 14px;
+                vertical-alignment: center;
+                clicked => {
+                    root.settings-visible = true;
+                }
+            }
         }
 
         if root.update-state != UpdateState.idle && root.update-state != UpdateState.checking: Rectangle {
-            border-radius: 12px;
-            background: root.update-state == UpdateState.failed ? Theme.red.transparentize(0.88) : Theme.accent.transparentize(0.88);
+            border-radius: Theme.radius-lg;
+            background: root.update-state == UpdateState.failed ? Theme.error.transparentize(0.88) : Theme.accent-soft;
             min-height: banner.preferred-height;
             banner := VerticalLayout {
-                padding: 14px;
+                padding: 16px;
                 spacing: 10px;
                 Text {
                     wrap: word-wrap;
+                    color: Theme.text;
                     text: root.update-text;
                 }
 
-                if root.update-state == UpdateState.downloading: ProgressIndicator {
+                if root.update-state == UpdateState.downloading: Rectangle {
                     height: 6px;
-                    progress: root.update-progress;
+                    border-radius: 3px;
+                    background: Theme.line;
+                    Rectangle {
+                        width: parent.width * root.update-progress;
+                        height: parent.height;
+                        border-radius: 3px;
+                        background: Theme.accent;
+                    }
                 }
 
                 HorizontalLayout {
                     alignment: end;
                     spacing: 16px;
                     if root.update-state == UpdateState.available: Link {
-                        text: "What's new";
+                        text: Labels.whats-new;
+                        font-size: 14px;
                         vertical-alignment: center;
                         clicked => {
                             root.open-release-notes();
@@ -378,8 +629,8 @@ export component AppWindow inherits Window {
                     }
 
                     if root.update-state == UpdateState.available: BigButton {
-                        text: "Update now";
-                        font-size: 15px;
+                        text: Labels.update-now;
+                        font-size: 14px;
                         min-height: 40px;
                         width: 130px;
                         clicked => {
@@ -388,17 +639,18 @@ export component AppWindow inherits Window {
                     }
 
                     if root.update-state == UpdateState.done: BigButton {
-                        text: "Restart VPNdeck";
-                        font-size: 15px;
+                        text: Labels.restart-app;
+                        font-size: 14px;
                         min-height: 40px;
-                        width: 160px;
+                        width: 170px;
                         clicked => {
                             root.restart-app();
                         }
                     }
 
                     if root.update-state == UpdateState.failed: Link {
-                        text: "Dismiss";
+                        text: Labels.dismiss;
+                        font-size: 14px;
                         clicked => {
                             root.dismiss-update();
                         }
@@ -407,43 +659,115 @@ export component AppWindow inherits Window {
             }
         }
 
+        // First run: nothing to connect to yet, so the import is the only action.
+        if root.profile-count == 0: Rectangle {
+            border-radius: Theme.radius-lg;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.line;
+            drop-shadow-color: Theme.shadow;
+            drop-shadow-blur: Theme.shadow-blur;
+            drop-shadow-offset-y: 12px;
+            min-height: empty-card.preferred-height;
+            empty-card := VerticalLayout {
+                padding: 28px;
+                spacing: 14px;
+
+                HorizontalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 64px;
+                        height: 64px;
+                        border-radius: Theme.radius-lg;
+                        background: Theme.accent-soft;
+                        Image {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            source: @image-url("../assets/shield.svg");
+                            colorize: Theme.accent;
+                            width: 32px;
+                            height: 32px;
+                        }
+                    }
+                }
+
+                Text {
+                    text: Labels.empty-title;
+                    font-size: 18px;
+                    font-weight: 700;
+                    color: Theme.text;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: Labels.empty-hint;
+                    font-size: 14px;
+                    wrap: word-wrap;
+                    color: Theme.text-muted;
+                    horizontal-alignment: center;
+                }
+
+                BigButton {
+                    text: Labels.import-profiles;
+                    font-size: 15px;
+                    min-height: 44px;
+                    clicked => {
+                        root.import-profile();
+                    }
+                }
+            }
+        }
+
         // Status card
-        Rectangle {
-            border-radius: 16px;
-            background: root.state-color.transparentize(0.88);
+        if root.profile-count > 0: Rectangle {
+            border-radius: Theme.radius-lg;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.line;
+            drop-shadow-color: Theme.shadow;
+            drop-shadow-blur: Theme.shadow-blur;
+            drop-shadow-offset-y: 12px;
             min-height: card.preferred-height;
             card := VerticalLayout {
-                padding: 18px;
-                spacing: 16px;
+                padding: 20px;
+                spacing: 18px;
                 HorizontalLayout {
-                    spacing: 16px;
-                    Image {
-                        source: @image-url("../assets/shield.svg");
-                        colorize: root.state-color;
-                        width: 60px;
-                        height: 60px;
+                    spacing: 14px;
+                    Rectangle {
+                        width: 52px;
+                        height: 52px;
+                        border-radius: Theme.radius-md;
+                        background: root.state-color.transparentize(0.88);
+                        Image {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            source: @image-url("../assets/shield.svg");
+                            colorize: root.state-color;
+                            width: 28px;
+                            height: 28px;
+                        }
                     }
 
                     VerticalLayout {
                         alignment: center;
                         spacing: 2px;
                         Text {
-                            font-size: 25px;
+                            font-size: 22px;
                             font-weight: 700;
-                            color: root.shown-state == ConnState.idle ? Palette.foreground : root.state-color;
-                            text: root.shown-state == ConnState.connected ? "Connected"
-                                : root.shown-state == ConnState.connecting ? "Connecting…"
-                                : root.shown-state == ConnState.disconnecting ? "Disconnecting…"
-                                : root.shown-state == ConnState.error ? "Couldn't connect"
-                                : "Not connected";
+                            color: root.shown-state == ConnState.idle ? Theme.text : root.state-color;
+                            text: root.shown-state == ConnState.connected ? Labels.state-connected
+                                : root.shown-state == ConnState.connecting ? Labels.state-connecting
+                                : root.shown-state == ConnState.disconnecting ? Labels.state-disconnecting
+                                : root.shown-state == ConnState.error ? Labels.state-error
+                                : Labels.state-idle;
                         }
 
                         Text {
-                            font-size: 15px;
+                            font-size: 14px;
                             wrap: word-wrap;
-                            color: Theme.muted;
+                            color: Theme.text-muted;
                             text: root.shown-state == ConnState.connected ? root.card-name + "  ·  " + root.duration
-                                : root.shown-state == ConnState.idle ? (root.card-name != "" ? root.card-name : "Choose a profile below")
+                                : root.shown-state == ConnState.idle ? (root.card-name != "" ? root.card-name : Labels.choose-profile)
                                 : root.status-text;
                         }
                     }
@@ -453,24 +777,24 @@ export component AppWindow inherits Window {
                     spacing: 12px;
                     Row {
                         Stat {
-                            label: "VPN address";
+                            label: Labels.vpn-address;
                             value: root.local-ip;
                         }
 
                         Stat {
-                            label: "Server";
+                            label: Labels.server;
                             value: root.remote;
                         }
                     }
 
                     Row {
                         Stat {
-                            label: "Received";
+                            label: Labels.received;
                             value: root.rx;
                         }
 
                         Stat {
-                            label: "Sent";
+                            label: Labels.sent;
                             value: root.tx;
                         }
                     }
@@ -478,11 +802,11 @@ export component AppWindow inherits Window {
             }
         }
 
-        BigButton {
+        if root.profile-count > 0: BigButton {
             primary: !root.busy;
-            text: !root.busy ? "Connect"
-                : root.conn-state == ConnState.disconnecting ? "Disconnecting…"
-                : "Disconnect";
+            text: !root.busy ? Labels.connect
+                : root.conn-state == ConnState.disconnecting ? Labels.state-disconnecting
+                : Labels.disconnect;
             enabled: root.busy ? root.conn-state != ConnState.disconnecting : root.has-selection;
             clicked => {
                 if root.busy {
@@ -493,17 +817,27 @@ export component AppWindow inherits Window {
             }
         }
 
-        HorizontalLayout {
+        if root.profile-count > 0: HorizontalLayout {
             padding-top: 4px;
+            spacing: 8px;
             Text {
-                text: "Profiles";
-                font-size: 17px;
+                text: Labels.profiles;
+                font-size: 16px;
                 font-weight: 700;
+                color: Theme.text;
+            }
+
+            Text {
+                text: "(" + root.profile-count + ")";
+                font-size: 14px;
+                color: Theme.text-muted;
+                vertical-alignment: center;
                 horizontal-stretch: 1;
             }
 
             Link {
-                text: "+ Import";
+                text: Labels.import-label;
+                font-size: 14px;
                 vertical-alignment: center;
                 clicked => {
                     root.import-profile();
@@ -511,10 +845,28 @@ export component AppWindow inherits Window {
             }
         }
 
-        if root.notice != "": Text {
-            wrap: word-wrap;
-            color: Theme.muted;
-            text: root.notice;
+        // Only worth the space once the list is long enough to scan.
+        if root.profile-count > 4: Field {
+            placeholder: Labels.search-placeholder;
+            text <=> root.search-query;
+        }
+
+        if root.notice != "": Rectangle {
+            border-radius: Theme.radius-md;
+            background: root.notice-error ? Theme.error.transparentize(0.9) : Theme.accent-soft;
+            min-height: notice-text.preferred-height;
+            notice-text := VerticalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                padding-top: 12px;
+                padding-bottom: 12px;
+                Text {
+                    text: root.notice;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                    color: root.notice-error ? Theme.error : Theme.text;
+                }
+            }
         }
 
         ListView {
@@ -524,17 +876,17 @@ export component AppWindow inherits Window {
                 ProfileRow {
                     name: profile.name;
                     saved-password: profile.saved-password;
-                    selected: i == root.selected;
-                    connected: i == root.active && root.conn-state == ConnState.connected;
-                    can-remove: i != root.active;
+                    selected: profile.index == root.selected;
+                    connected: profile.index == root.active && root.conn-state == ConnState.connected;
+                    can-remove: profile.index != root.active;
                     clicked => {
-                        root.selected = i;
+                        root.select-profile(profile.index);
                     }
                     remove => {
-                        root.confirm-remove = i;
+                        root.request-remove(profile.index);
                     }
                     forget-password => {
-                        root.forget-password(i);
+                        root.forget-password(profile.index);
                     }
                 }
             }
@@ -545,15 +897,15 @@ export component AppWindow inherits Window {
             HorizontalLayout {
                 Text {
                     text: "VPNdeck " + root.version;
-                    font-size: 13px;
-                    color: Theme.muted;
+                    font-size: 12px;
+                    color: Theme.text-muted;
                     horizontal-stretch: 1;
                 }
 
                 Link {
-                    font-size: 13px;
+                    font-size: 12px;
                     enabled: root.can-check;
-                    text: root.update-state == UpdateState.checking ? "Checking…" : "Check for updates";
+                    text: root.update-state == UpdateState.checking ? Labels.checking : Labels.check-updates;
                     clicked => {
                         root.check-updates();
                     }
@@ -562,31 +914,116 @@ export component AppWindow inherits Window {
 
             if root.update-note != "": Text {
                 text: root.update-note;
-                font-size: 13px;
+                font-size: 12px;
                 wrap: word-wrap;
-                color: Theme.muted;
+                color: Theme.text-muted;
             }
         }
     }
 
-    if root.confirm-remove >= 0 && root.confirm-remove < root.profiles.length: Modal {
+    if root.settings-visible: Modal {
+        cancel => {
+            root.settings-visible = false;
+        }
+
+        Text {
+            text: Labels.settings;
+            font-size: 20px;
+            font-weight: 700;
+            color: Theme.text;
+        }
+
+        Text {
+            text: Labels.theme;
+            font-size: 14px;
+            color: Theme.text-muted;
+        }
+
+        HorizontalLayout {
+            spacing: 10px;
+            BigButton {
+                primary: Theme.dark;
+                text: Labels.dark;
+                font-size: 15px;
+                min-height: 44px;
+                clicked => {
+                    root.set-theme(true);
+                }
+            }
+
+            BigButton {
+                primary: !Theme.dark;
+                text: Labels.light;
+                font-size: 15px;
+                min-height: 44px;
+                clicked => {
+                    root.set-theme(false);
+                }
+            }
+        }
+
+        Text {
+            text: Labels.language;
+            font-size: 14px;
+            color: Theme.text-muted;
+        }
+
+        HorizontalLayout {
+            spacing: 10px;
+            BigButton {
+                primary: root.lang == "en";
+                text: "English";
+                font-size: 15px;
+                min-height: 44px;
+                clicked => {
+                    root.set-language("en");
+                }
+            }
+
+            BigButton {
+                primary: root.lang == "ru";
+                text: "Русский";
+                font-size: 15px;
+                min-height: 44px;
+                clicked => {
+                    root.set-language("ru");
+                }
+            }
+        }
+
+        HorizontalLayout {
+            alignment: end;
+            padding-top: 4px;
+            BigButton {
+                primary: false;
+                text: Labels.close;
+                font-size: 15px;
+                min-height: 44px;
+                width: 110px;
+                clicked => {
+                    root.settings-visible = false;
+                }
+            }
+        }
+    }
+
+    if root.confirm-remove >= 0: Modal {
         cancel => {
             root.confirm-remove = -1;
         }
 
         Text {
-            text: "Remove “" + root.profiles[root.confirm-remove].name + "”?";
+            text: root.confirm-title;
             wrap: word-wrap;
             font-size: 20px;
             font-weight: 700;
+            color: Theme.text;
         }
 
         Text {
-            text: root.profiles[root.confirm-remove].saved-password
-                ? "The profile and its saved password will be deleted. You'll need the .ovpn file to add it again."
-                : "The profile will be deleted. You'll need the .ovpn file to add it again.";
+            text: root.confirm-saved-password ? Labels.remove-body-saved : Labels.remove-body;
             wrap: word-wrap;
-            color: Theme.muted;
+            color: Theme.text-muted;
         }
 
         HorizontalLayout {
@@ -594,9 +1031,9 @@ export component AppWindow inherits Window {
             padding-top: 4px;
             BigButton {
                 primary: false;
-                text: "Cancel";
-                font-size: 16px;
-                min-height: 48px;
+                text: Labels.cancel;
+                font-size: 15px;
+                min-height: 44px;
                 init => {
                     self.focus();
                 }
@@ -606,9 +1043,9 @@ export component AppWindow inherits Window {
             }
 
             BigButton {
-                text: "Remove";
-                font-size: 16px;
-                min-height: 48px;
+                text: Labels.remove;
+                font-size: 15px;
+                min-height: 44px;
                 clicked => {
                     root.remove-profile(root.confirm-remove);
                     root.confirm-remove = -1;
@@ -627,48 +1064,87 @@ export component AppWindow inherits Window {
             wrap: word-wrap;
             font-size: 20px;
             font-weight: 700;
+            color: Theme.text;
         }
 
-        if root.auth-needs-username: LineEdit {
-            placeholder-text: "Username";
-            font-size: 16px;
-            min-height: 44px;
+        if root.auth-password-saved: Text {
+            text: Labels.password-saved-hint;
+            wrap: word-wrap;
+            color: Theme.text-muted;
+        }
+
+        if root.auth-needs-username: Field {
+            placeholder: Labels.username;
             text <=> root.auth-username;
             init => {
                 if root.auth-username == "" {
-                    self.focus();
+                    self.focus-input();
                 }
             }
             accepted => {
-                password-edit.focus();
+                password-edit.focus-input();
             }
         }
 
-        password-edit := LineEdit {
-            placeholder-text: "Password";
-            input-type: password;
-            font-size: 16px;
-            min-height: 44px;
+        password-edit := Field {
+            visible: root.auth-needs-password;
+            placeholder: Labels.password;
+            password: true;
             text <=> root.auth-password;
             init => {
                 if !root.auth-needs-username || root.auth-username != "" {
-                    self.focus();
+                    self.focus-input();
                 }
             }
             accepted => {
-                root.submit-auth(root.auth-username, root.auth-password);
+                if root.auth-needs-code {
+                    code-edit.focus-input();
+                } else {
+                    root.submit-auth(root.auth-username, root.auth-password, root.auth-code);
+                }
             }
         }
 
-        CheckBox {
-            text: "Remember password";
+        VerticalLayout {
+            visible: root.auth-needs-code;
+            spacing: 6px;
+            if root.auth-challenge-text != "": Text {
+                text: root.auth-challenge-text;
+                wrap: word-wrap;
+                color: Theme.text-muted;
+            }
+
+            code-edit := Field {
+                placeholder: Labels.code;
+                password: true;
+                text <=> root.auth-code;
+                init => {
+                    if !root.auth-needs-password {
+                        self.focus-input();
+                    }
+                }
+                accepted => {
+                    root.submit-auth(root.auth-username, root.auth-password, root.auth-code);
+                }
+            }
+        }
+
+        if root.auth-needs-password: Check {
+            text: Labels.remember-password;
             checked <=> root.auth-remember;
+        }
+
+        if root.auth-password-saved: Link {
+            text: Labels.change-password;
+            clicked => {
+                root.change-password();
+            }
         }
 
         if root.auth-error != "": Text {
             text: root.auth-error;
             wrap: word-wrap;
-            color: Theme.red;
+            color: Theme.error;
         }
 
         HorizontalLayout {
@@ -676,20 +1152,20 @@ export component AppWindow inherits Window {
             padding-top: 4px;
             BigButton {
                 primary: false;
-                text: "Cancel";
-                font-size: 16px;
-                min-height: 48px;
+                text: Labels.cancel;
+                font-size: 15px;
+                min-height: 44px;
                 clicked => {
                     root.cancel-auth();
                 }
             }
 
             BigButton {
-                text: "Sign in";
-                font-size: 16px;
-                min-height: 48px;
+                text: root.auth-needs-password ? Labels.sign-in : Labels.continue-button;
+                font-size: 15px;
+                min-height: 44px;
                 clicked => {
-                    root.submit-auth(root.auth-username, root.auth-password);
+                    root.submit-auth(root.auth-username, root.auth-password, root.auth-code);
                 }
             }
         }
@@ -697,11 +1173,13 @@ export component AppWindow inherits Window {
 }
 
 export component LogWindow inherits Window {
-    title: "VPNdeck log";
+    title: Labels.log-title;
     icon: @image-url("../assets/vpndeck-256.png");
     preferred-width: 760px;
     preferred-height: 460px;
     default-font-size: 15px;
+    default-font-family: Theme.font-family;
+    background: Theme.bg;
 
     in property <[string]> lines;
     in property <int> count;
@@ -719,20 +1197,22 @@ export component LogWindow inherits Window {
     }
 
     VerticalLayout {
-        padding: 16px;
-        spacing: 12px;
+        padding: 20px;
+        spacing: 14px;
         HorizontalLayout {
             spacing: 18px;
             Text {
-                text: "Connection log";
+                text: Labels.connection-log;
                 font-size: 18px;
                 font-weight: 700;
+                color: Theme.text;
                 horizontal-stretch: 1;
                 vertical-alignment: center;
             }
 
             Link {
-                text: "Copy all";
+                text: Labels.copy-all;
+                font-size: 14px;
                 vertical-alignment: center;
                 enabled: root.lines.length > 0;
                 clicked => {
@@ -741,7 +1221,8 @@ export component LogWindow inherits Window {
             }
 
             Link {
-                text: "Save…";
+                text: Labels.save;
+                font-size: 14px;
                 vertical-alignment: center;
                 enabled: root.lines.length > 0;
                 clicked => {
@@ -750,19 +1231,19 @@ export component LogWindow inherits Window {
             }
 
             Link {
-                text: "Clear";
+                text: Labels.clear;
+                font-size: 14px;
                 vertical-alignment: center;
                 enabled: root.lines.length > 0;
                 clicked => {
-                    root.follow = true;
                     root.clear();
                 }
             }
         }
 
         if root.lines.length == 0: Text {
-            color: Theme.muted;
-            text: "Nothing logged yet. OpenVPN's output appears here while you connect.";
+            color: Theme.text-muted;
+            text: Labels.log-empty;
             wrap: word-wrap;
         }
 
@@ -776,6 +1257,7 @@ export component LogWindow inherits Window {
                 wrap: word-wrap;
                 font-family: "monospace";
                 font-size: 12px;
+                color: Theme.text;
             }
         }
     }
