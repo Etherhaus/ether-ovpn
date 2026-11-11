@@ -135,7 +135,10 @@ impl Settings {
 }
 
 fn path() -> PathBuf {
-    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("ether").join("settings.json")
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("ether")
+        .join("settings.json")
 }
 
 #[cfg(test)]

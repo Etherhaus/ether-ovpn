@@ -117,7 +117,13 @@ impl Store {
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
         let stem: String = name
             .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '-'
+                }
+            })
             .collect();
         let mut file = dir.join(format!("{stem}.ovpn"));
         for n in 2.. {
@@ -144,7 +150,11 @@ impl Store {
 
     /// Copies `src` into the store and returns the new profile's index.
     fn import_one(&mut self, src: &Path, bytes: &[u8]) -> io::Result<usize> {
-        let base = src.file_stem().and_then(|s| s.to_str()).unwrap_or("profile").to_string();
+        let base = src
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("profile")
+            .to_string();
         // Files picked through the document portal live in a FUSE mount that
         // root (openvpn) can't enter, so those fall back to our own copy's folder.
         let workdir = fs::canonicalize(src)
@@ -167,7 +177,10 @@ impl Store {
             .collect();
 
         for path in paths {
-            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.display().to_string());
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
             let bytes = match read_profile(path) {
                 Ok(bytes) => bytes,
                 Err(e) if e.kind() == io::ErrorKind::InvalidInput => {
@@ -207,10 +220,17 @@ impl Store {
             return Err(SkipReason::NotProfile);
         }
         let hash = digest(bytes);
-        if self.profiles.iter().filter_map(|p| fs::read(&p.file).ok()).any(|b| digest(&b) == hash) {
+        if self
+            .profiles
+            .iter()
+            .filter_map(|p| fs::read(&p.file).ok())
+            .any(|b| digest(&b) == hash)
+        {
             return Err(SkipReason::Duplicate);
         }
-        let index = self.store_copy(name, bytes, None).map_err(|e| SkipReason::Failed(e.to_string()))?;
+        let index = self
+            .store_copy(name, bytes, None)
+            .map_err(|e| SkipReason::Failed(e.to_string()))?;
         let _ = self.save();
         Ok(index)
     }
@@ -220,10 +240,17 @@ impl Store {
         if name.is_empty() {
             return Err(RenameError::Empty);
         }
-        if self.profiles.iter().enumerate().any(|(i, p)| i != index && p.name == name) {
+        if self
+            .profiles
+            .iter()
+            .enumerate()
+            .any(|(i, p)| i != index && p.name == name)
+        {
             return Err(RenameError::Taken);
         }
-        let Some(profile) = self.profiles.get_mut(index) else { return Err(RenameError::Empty) };
+        let Some(profile) = self.profiles.get_mut(index) else {
+            return Err(RenameError::Empty);
+        };
         profile.name = name.to_string();
         self.save().map_err(|e| RenameError::Save(e.to_string()))
     }
@@ -267,7 +294,11 @@ impl Store {
 
 /// Reads a profile, rejecting anything that isn't an .ovpn/.conf text file.
 fn read_profile(path: &Path) -> io::Result<Vec<u8>> {
-    let extension = path.extension().and_then(|e| e.to_str()).unwrap_or_default().to_lowercase();
+    let extension = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_lowercase();
     if extension != "ovpn" && extension != "conf" {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "not an .ovpn file"));
     }
@@ -320,7 +351,9 @@ pub fn risky_directives(text: &str) -> Vec<String> {
         if line.starts_with('#') || line.starts_with(';') {
             continue;
         }
-        let Some(word) = line.split_whitespace().next() else { continue };
+        let Some(word) = line.split_whitespace().next() else {
+            continue;
+        };
         if SCRIPT_DIRECTIVES.contains(&word) && !found.iter().any(|f| f == word) {
             found.push(word.to_string());
         }
@@ -349,7 +382,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("ether-ovpn-test-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        Store { dir, profiles: Vec::new() }
+        Store {
+            dir,
+            profiles: Vec::new(),
+        }
     }
 
     fn profile_file(dir: &Path, name: &str, body: &str) -> PathBuf {
@@ -391,7 +427,10 @@ mod tests {
         let report = store.import_many(&[copy]);
 
         assert!(report.imported.is_empty());
-        assert_eq!(report.skipped, vec![("work-copy.ovpn".to_string(), SkipReason::Duplicate)]);
+        assert_eq!(
+            report.skipped,
+            vec![("work-copy.ovpn".to_string(), SkipReason::Duplicate)]
+        );
         assert_eq!(store.profiles.len(), 1);
     }
 
@@ -407,7 +446,12 @@ mod tests {
 
         assert!(report.imported.is_empty());
         assert_eq!(report.skipped.len(), 2);
-        assert!(report.skipped.iter().all(|(_, reason)| *reason == SkipReason::NotProfile));
+        assert!(
+            report
+                .skipped
+                .iter()
+                .all(|(_, reason)| *reason == SkipReason::NotProfile)
+        );
         assert!(store.profiles.is_empty());
     }
 
@@ -445,8 +489,12 @@ mod tests {
     #[test]
     fn renames_a_profile() {
         let mut store = store("rename");
-        store.import_text("first", "client\nremote a.example.com 1194\n").unwrap();
-        store.import_text("second", "client\nremote b.example.com 1194\n").unwrap();
+        store
+            .import_text("first", "client\nremote a.example.com 1194\n")
+            .unwrap();
+        store
+            .import_text("second", "client\nremote b.example.com 1194\n")
+            .unwrap();
 
         store.rename(0, "  Office  ").unwrap();
         assert_eq!(store.profiles[0].name, "Office");
@@ -471,7 +519,10 @@ mod tests {
 
     #[test]
     fn reads_the_remote_line() {
-        assert_eq!(remote_of("client\nremote vpn.example.com 1194\n"), "vpn.example.com:1194");
+        assert_eq!(
+            remote_of("client\nremote vpn.example.com 1194\n"),
+            "vpn.example.com:1194"
+        );
         assert_eq!(remote_of("remote vpn.example.com\n"), "vpn.example.com");
         assert_eq!(remote_of("client\n"), "");
         assert_eq!(remote_of(""), "");

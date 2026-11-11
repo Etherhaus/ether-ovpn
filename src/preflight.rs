@@ -52,34 +52,61 @@ const FILE_DIRECTIVES: [&str; 8] = [
 pub fn run(profile: &Profile) -> Vec<Check> {
     let text = match std::fs::read_to_string(&profile.file) {
         Ok(text) => text,
-        Err(e) => return vec![Check { kind: Kind::File, outcome: Outcome::Failed(e.to_string()) }],
+        Err(e) => {
+            return vec![Check {
+                kind: Kind::File,
+                outcome: Outcome::Failed(e.to_string()),
+            }];
+        }
     };
-    let mut checks = vec![Check { kind: Kind::File, outcome: Outcome::Passed }];
+    let mut checks = vec![Check {
+        kind: Kind::File,
+        outcome: Outcome::Passed,
+    }];
 
     let Some((host, port)) = remote_of(&text) else {
-        checks.push(Check { kind: Kind::Remote, outcome: Outcome::Failed(String::new()) });
+        checks.push(Check {
+            kind: Kind::Remote,
+            outcome: Outcome::Failed(String::new()),
+        });
         return checks;
     };
-    checks.push(Check { kind: Kind::Remote, outcome: Outcome::Passed });
+    checks.push(Check {
+        kind: Kind::Remote,
+        outcome: Outcome::Passed,
+    });
 
     let missing = missing_files(&text, profile.workdir.as_deref());
     checks.push(Check {
         kind: Kind::Files,
-        outcome: if missing.is_empty() { Outcome::Passed } else { Outcome::Failed(missing.join(", ")) },
+        outcome: if missing.is_empty() {
+            Outcome::Passed
+        } else {
+            Outcome::Failed(missing.join(", "))
+        },
     });
 
     let addrs: Vec<SocketAddr> = match (host.as_str(), port).to_socket_addrs() {
         Ok(addrs) => addrs.collect(),
         Err(e) => {
-            checks.push(Check { kind: Kind::Dns, outcome: Outcome::Failed(e.to_string()) });
+            checks.push(Check {
+                kind: Kind::Dns,
+                outcome: Outcome::Failed(e.to_string()),
+            });
             return checks;
         }
     };
     if addrs.is_empty() {
-        checks.push(Check { kind: Kind::Dns, outcome: Outcome::Failed(host) });
+        checks.push(Check {
+            kind: Kind::Dns,
+            outcome: Outcome::Failed(host),
+        });
         return checks;
     }
-    checks.push(Check { kind: Kind::Dns, outcome: Outcome::Passed });
+    checks.push(Check {
+        kind: Kind::Dns,
+        outcome: Outcome::Passed,
+    });
 
     checks.push(port_check(&text, &addrs));
     checks
@@ -123,7 +150,11 @@ fn missing_files(text: &str, workdir: Option<&Path>) -> Vec<String> {
         if name.starts_with('<') || name.starts_with('[') {
             continue;
         }
-        let path = if Path::new(name).is_absolute() { PathBuf::from(name) } else { base.join(name) };
+        let path = if Path::new(name).is_absolute() {
+            PathBuf::from(name)
+        } else {
+            base.join(name)
+        };
         if !path.exists() && !missing.iter().any(|m| m == name) {
             missing.push(name.to_string());
         }
@@ -133,16 +164,27 @@ fn missing_files(text: &str, workdir: Option<&Path>) -> Vec<String> {
 
 fn port_check(text: &str, addrs: &[SocketAddr]) -> Check {
     if proto_of(text).starts_with("udp") {
-        return Check { kind: Kind::Port, outcome: Outcome::Skipped("udp".to_string()) };
+        return Check {
+            kind: Kind::Port,
+            outcome: Outcome::Skipped("udp".to_string()),
+        };
     }
     let mut last = String::new();
     for addr in addrs {
         match TcpStream::connect_timeout(addr, TIMEOUT) {
-            Ok(_) => return Check { kind: Kind::Port, outcome: Outcome::Passed },
+            Ok(_) => {
+                return Check {
+                    kind: Kind::Port,
+                    outcome: Outcome::Passed,
+                };
+            }
             Err(e) => last = e.to_string(),
         }
     }
-    Check { kind: Kind::Port, outcome: Outcome::Failed(last) }
+    Check {
+        kind: Kind::Port,
+        outcome: Outcome::Failed(last),
+    }
 }
 
 #[cfg(test)]
@@ -172,9 +214,15 @@ mod tests {
 
     #[test]
     fn reads_the_remote_line() {
-        assert_eq!(remote_of("client\nremote vpn.example.com 1195\n"), Some(("vpn.example.com".into(), 1195)));
+        assert_eq!(
+            remote_of("client\nremote vpn.example.com 1195\n"),
+            Some(("vpn.example.com".into(), 1195))
+        );
         // OpenVPN's default port.
-        assert_eq!(remote_of("remote vpn.example.com\n"), Some(("vpn.example.com".into(), 1194)));
+        assert_eq!(
+            remote_of("remote vpn.example.com\n"),
+            Some(("vpn.example.com".into(), 1194))
+        );
         assert_eq!(remote_of("client\n"), None);
     }
 
@@ -206,7 +254,10 @@ mod tests {
     #[test]
     fn reports_a_missing_certificate() {
         let dir = temp("nocert");
-        let checks = run(&profile(&dir, "client\nremote 127.0.0.1 1194\nproto tcp\nca absent.crt\n"));
+        let checks = run(&profile(
+            &dir,
+            "client\nremote 127.0.0.1 1194\nproto tcp\nca absent.crt\n",
+        ));
         let files = checks.iter().find(|c| c.kind == Kind::Files).unwrap();
         assert_eq!(files.outcome, Outcome::Failed("absent.crt".into()));
     }

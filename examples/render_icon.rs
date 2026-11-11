@@ -7,6 +7,10 @@ fn main() {
     let tree = resvg::usvg::Tree::from_data(&svg, &Default::default()).unwrap();
     let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size).unwrap();
     let scale = size as f32 / tree.size().width();
-    resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
     pixmap.save_png(&out).unwrap();
 }

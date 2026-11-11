@@ -16,7 +16,9 @@ const ICON: &str = "ether-ovpn";
 pub fn send(summary: impl Into<String>, body: impl Into<String>) {
     let (summary, body) = (summary.into(), body.into());
     std::thread::spawn(move || {
-        let Ok(connection) = zbus::blocking::Connection::session() else { return };
+        let Ok(connection) = zbus::blocking::Connection::session() else {
+            return;
+        };
         let hints: HashMap<String, Value> = HashMap::new();
         let _ = connection.call_method(
             Some("org.freedesktop.Notifications"),

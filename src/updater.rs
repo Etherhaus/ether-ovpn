@@ -81,7 +81,12 @@ fn check() -> Result<UpdateStatus, String> {
         404 => return Err("No releases have been published yet".to_owned()),
         code => return Err(format!("GitHub answered with HTTP {code}")),
     }
-    let body = response.body_mut().with_config().limit(MAX_JSON).read_to_string().map_err(|e| e.to_string())?;
+    let body = response
+        .body_mut()
+        .with_config()
+        .limit(MAX_JSON)
+        .read_to_string()
+        .map_err(|e| e.to_string())?;
     let release: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
     let tag = release["tag_name"].as_str().ok_or("The release has no version tag")?;
     let url = release["html_url"].as_str().unwrap_or(REPOSITORY).to_owned();
@@ -99,7 +104,11 @@ fn check() -> Result<UpdateStatus, String> {
         .collect();
 
     Ok(if is_newer(tag, CURRENT) {
-        UpdateStatus::Available(Release { version: tag.trim_start_matches('v').to_owned(), url, assets })
+        UpdateStatus::Available(Release {
+            version: tag.trim_start_matches('v').to_owned(),
+            url,
+            assets,
+        })
     } else {
         UpdateStatus::UpToDate
     })
@@ -111,7 +120,11 @@ fn is_newer(candidate: &str, current: &str) -> bool {
     fn parse(v: &str) -> Option<(u64, u64, u64)> {
         let core = v.trim().trim_start_matches('v').split(['-', '+']).next()?;
         let mut parts = core.split('.').map(|p| p.parse::<u64>());
-        Some((parts.next()?.ok()?, parts.next().unwrap_or(Ok(0)).ok()?, parts.next().unwrap_or(Ok(0)).ok()?))
+        Some((
+            parts.next()?.ok()?,
+            parts.next().unwrap_or(Ok(0)).ok()?,
+            parts.next().unwrap_or(Ok(0)).ok()?,
+        ))
     }
     matches!((parse(candidate), parse(current)), (Some(a), Some(b)) if a > b)
 }
@@ -159,7 +172,11 @@ impl Install {
             return Err("This copy was built from source. Update it with git pull and cargo build.".to_owned());
         }
         if exe.starts_with("/usr/") {
-            let from_rpm = Command::new("rpm").arg("-qf").arg(&exe).output().is_ok_and(|o| o.status.success());
+            let from_rpm = Command::new("rpm")
+                .arg("-qf")
+                .arg(&exe)
+                .output()
+                .is_ok_and(|o| o.status.success());
             return Ok(if from_rpm { Self::Rpm } else { Self::Deb });
         }
         Ok(Self::Binary(exe))
@@ -185,9 +202,9 @@ impl Install {
         let result = match self {
             Self::Binary(exe) => Command::new(exe).spawn(),
             Self::Deb | Self::Rpm => Command::new("/usr/bin/ether-ovpn").spawn(),
-            Self::Flatpak { app_id, .. } => {
-                Command::new("flatpak-spawn").args(["--host", "flatpak", "run", app_id]).spawn()
-            }
+            Self::Flatpak { app_id, .. } => Command::new("flatpak-spawn")
+                .args(["--host", "flatpak", "run", app_id])
+                .spawn(),
         };
         result.map(drop).map_err(|e| format!("Couldn't restart Ether: {e}"))
     }
@@ -222,7 +239,10 @@ fn download_and_install(install: &Install, assets: &[Asset], report: &dyn Fn(Pro
         .find(|a| a.name == CHECKSUMS)
         .ok_or("The release has no checksums to verify the download with")?;
 
-    let dir = dirs::cache_dir().ok_or("No cache folder to download to")?.join("ether").join("updates");
+    let dir = dirs::cache_dir()
+        .ok_or("No cache folder to download to")?
+        .join("ether")
+        .join("updates");
     fs::create_dir_all(&dir).map_err(|e| format!("Can't create {}: {e}", dir.display()))?;
     let file = dir.join(&asset.name);
 
@@ -237,16 +257,24 @@ fn download_and_install(install: &Install, assets: &[Asset], report: &dyn Fn(Pro
         report(Progress::Installing);
         match install {
             Install::Binary(exe) => replace_binary(&file, exe),
-            Install::Deb => {
-                run_installer(Command::new("pkexec").args(["apt-get", "install", "-y", "--allow-downgrades"]).arg(&file))
-            }
+            Install::Deb => run_installer(
+                Command::new("pkexec")
+                    .args(["apt-get", "install", "-y", "--allow-downgrades"])
+                    .arg(&file),
+            ),
             // The .rpm isn't signed, which zypper refuses without being told.
             Install::Rpm if Path::new("/usr/bin/dnf").exists() => {
                 run_installer(Command::new("pkexec").args(["dnf", "install", "-y"]).arg(&file))
             }
             Install::Rpm => run_installer(
                 Command::new("pkexec")
-                    .args(["zypper", "--non-interactive", "install", "--allow-unsigned-rpm", "--oldpackage"])
+                    .args([
+                        "zypper",
+                        "--non-interactive",
+                        "install",
+                        "--allow-unsigned-rpm",
+                        "--oldpackage",
+                    ])
                     .arg(&file),
             ),
             Install::Flatpak { user, .. } => run_installer(
@@ -283,12 +311,15 @@ fn download(asset: &Asset, path: &Path, report: &dyn Fn(Progress)) -> Result<Str
     let mut buf = vec![0; 64 * 1024];
     let (mut done, mut last_report) = (0u64, 0.0f32);
     loop {
-        let n = reader.read(&mut buf).map_err(|e| format!("The download stopped: {e}"))?;
+        let n = reader
+            .read(&mut buf)
+            .map_err(|e| format!("The download stopped: {e}"))?;
         if n == 0 {
             break;
         }
         hasher.update(&buf[..n]);
-        out.write_all(&buf[..n]).map_err(|e| format!("Can't save the download: {e}"))?;
+        out.write_all(&buf[..n])
+            .map_err(|e| format!("Can't save the download: {e}"))?;
         done += n as u64;
         if done > MAX_DOWNLOAD {
             return Err("The download is far larger than a release should be".to_owned());
@@ -310,7 +341,12 @@ fn expected_checksum(sums: &Asset, name: &str) -> Result<String, String> {
         .header("User-Agent", format!("ether-ovpn/{CURRENT}"))
         .call()
         .map_err(|e| format!("Couldn't download the checksums: {e}"))?;
-    let text = response.body_mut().with_config().limit(MAX_SUMS).read_to_string().map_err(|e| e.to_string())?;
+    let text = response
+        .body_mut()
+        .with_config()
+        .limit(MAX_SUMS)
+        .read_to_string()
+        .map_err(|e| e.to_string())?;
     checksum_for(&text, name).ok_or_else(|| format!("{name} isn't listed in {CHECKSUMS}"))
 }
 
@@ -386,7 +422,10 @@ fn replace_binary(tarball: &Path, exe: &Path) -> Result<(), String> {
     let file = File::open(tarball).map_err(|e| e.to_string())?;
     let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(BufReader::new(file)));
     let mut found = false;
-    for entry in archive.entries().map_err(|e| format!("The download isn't a valid archive: {e}"))? {
+    for entry in archive
+        .entries()
+        .map_err(|e| format!("The download isn't a valid archive: {e}"))?
+    {
         let mut entry = entry.map_err(|e| format!("The download isn't a valid archive: {e}"))?;
         let path = entry.path().map_err(|e| e.to_string())?.into_owned();
         // The binary sits at ether-ovpn-<version>-x86_64-linux/ether-ovpn.
@@ -451,7 +490,11 @@ mod tests {
     }
 
     fn asset(name: &str) -> Asset {
-        Asset { name: name.to_owned(), url: format!("https://example.invalid/{name}"), size: 0 }
+        Asset {
+            name: name.to_owned(),
+            url: format!("https://example.invalid/{name}"),
+            size: 0,
+        }
     }
 
     #[test]
@@ -467,8 +510,14 @@ mod tests {
     #[test]
     fn finds_checksums() {
         let sums = "ABC123  ether-ovpn_0.2.0_amd64.deb\ndef456 *ether-ovpn-0.2.0-x86_64-linux.tar.gz\n";
-        assert_eq!(checksum_for(sums, "ether-ovpn_0.2.0_amd64.deb").as_deref(), Some("abc123"));
-        assert_eq!(checksum_for(sums, "ether-ovpn-0.2.0-x86_64-linux.tar.gz").as_deref(), Some("def456"));
+        assert_eq!(
+            checksum_for(sums, "ether-ovpn_0.2.0_amd64.deb").as_deref(),
+            Some("abc123")
+        );
+        assert_eq!(
+            checksum_for(sums, "ether-ovpn-0.2.0-x86_64-linux.tar.gz").as_deref(),
+            Some("def456")
+        );
         assert_eq!(checksum_for(sums, "other"), None);
     }
 
@@ -480,7 +529,10 @@ mod tests {
     #[test]
     fn finds_the_signature_of_the_downloaded_file() {
         let assets = [asset("payload.txt.minisig"), asset("other.minisig")];
-        assert_eq!(signature_asset(&assets, "payload.txt").unwrap().name, "payload.txt.minisig");
+        assert_eq!(
+            signature_asset(&assets, "payload.txt").unwrap().name,
+            "payload.txt.minisig"
+        );
     }
 
     #[test]
