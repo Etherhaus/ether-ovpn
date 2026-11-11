@@ -26,6 +26,10 @@ pub struct Settings {
     /// Show a desktop notification when a connection starts, drops or fails.
     #[serde(default = "default_notifications")]
     pub notifications: bool,
+    /// Draw the coral frame around the window. Off, the window is a plain
+    /// rectangle that sits flush with the desktop's own borders.
+    #[serde(default = "default_frame")]
+    pub frame: bool,
     /// The window size in logical pixels, so it reopens the way it was left.
     #[serde(default)]
     pub window: Option<[u32; 2]>,
@@ -43,6 +47,10 @@ fn default_notifications() -> bool {
     true
 }
 
+fn default_frame() -> bool {
+    true
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Settings {
@@ -51,6 +59,7 @@ impl Default for Settings {
             autostart: false,
             auto_connect: false,
             notifications: default_notifications(),
+            frame: default_frame(),
             window: None,
         }
     }
@@ -140,9 +149,23 @@ mod tests {
         let old: Settings = serde_json::from_str("{}").unwrap();
         assert!(old.dark());
         assert!(old.notifications);
+        assert!(old.frame);
         assert!(!old.autostart);
         assert!(!old.auto_connect);
         assert_eq!(old.window, None);
+    }
+
+    #[test]
+    fn reads_and_writes_the_frame() {
+        let plain: Settings = serde_json::from_str(r#"{"frame":false}"#).unwrap();
+        assert!(!plain.frame);
+
+        let mut settings = Settings::default();
+        assert!(settings.frame);
+        settings.frame = false;
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert!(!back.frame);
     }
 
     #[test]

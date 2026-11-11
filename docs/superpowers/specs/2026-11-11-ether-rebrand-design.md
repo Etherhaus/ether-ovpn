@@ -104,6 +104,9 @@ Every window — main, log, profile — is drawn as a niri window:
 - a 1px `line` hairline under the title bar, with an `accent-line` gradient
   running through the middle of it.
 
+The frame is a setting, on by default. Turned off, the surface fills the window
+and the corners are square, for desktops that draw their own borders.
+
 ### Type
 
 `Adwaita Sans` for the interface, `JetBrains Mono` for anything technical: the

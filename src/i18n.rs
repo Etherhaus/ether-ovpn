@@ -182,6 +182,8 @@ labels! {
     auto_connect, set_auto_connect => ("Connect on launch", "Подключаться при запуске"),
     notifications, set_notifications => ("Notifications", "Уведомления"),
     notify_on, set_notify_on => ("Show connection notifications", "Показывать уведомления"),
+    window, set_window => ("Window", "Окно"),
+    frame, set_frame => ("Window frame", "Обрамление окна"),
     close, set_close => ("Close", "Закрыть"),
 
     // Remove confirmation

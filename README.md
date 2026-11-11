@@ -30,7 +30,7 @@
 - Two-factor authentication: static challenge, CRV1 and crtext (see below)
 - Reconnects on its own when a working tunnel drops (three attempts, five seconds apart)
 - Desktop notifications when a connection starts, drops or fails
-- English and Russian; dark, light or follow-the-system theme
+- English and Russian; dark, light or follow-the-system theme, and an optional coral window frame
 - Live OpenVPN log with warnings and errors highlighted, a filter box, and a
   "Copy diagnostics" button that puts the version, OS, OpenVPN version and the last 50 lines
   on the clipboard for a support ticket

@@ -197,6 +197,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 let app = app.borrow();
                 apply_theme(&window, app.dark);
                 i18n::apply(&window, app.settings.lang());
+                window.set_frame(app.settings.frame);
             }
             window.set_lines(ModelRc::from(log_model.clone()));
             window.on_copy_all({
@@ -295,6 +296,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 let app = app.borrow();
                 apply_theme(&window, app.dark);
                 i18n::apply(&window, app.settings.lang());
+                window.set_frame(app.settings.frame);
             }
             window.set_lines(ModelRc::from(profile_line_model.clone()));
             window.on_check({
@@ -364,9 +366,6 @@ fn main() -> Result<(), slint::PlatformError> {
         ui.set_selected(0);
     }
     update_card_name(&ui, &app.borrow());
-    if let Some((width, height)) = app.borrow().settings.window_size() {
-        ui.window().set_size(slint::LogicalSize::new(width as f32, height as f32));
-    }
 
     ui.on_show_log({
         let log_window = log_window.clone();
@@ -468,6 +467,26 @@ fn main() -> Result<(), slint::PlatformError> {
         move |on| {
             let mut app = app.borrow_mut();
             app.settings.notifications = on;
+            let _ = app.settings.save();
+        }
+    });
+
+    ui.on_set_frame({
+        let ui_weak = ui.as_weak();
+        let app = app.clone();
+        let log_window = log_window.clone();
+        let profile_window = profile_window.clone();
+        move |on| {
+            let ui = ui_weak.unwrap();
+            let mut app = app.borrow_mut();
+            app.settings.frame = on;
+            ui.set_frame(on);
+            if let Some(window) = log_window.opened() {
+                window.set_frame(on);
+            }
+            if let Some(window) = profile_window.opened() {
+                window.set_frame(on);
+            }
             let _ = app.settings.save();
         }
     });
@@ -1107,6 +1126,11 @@ fn main() -> Result<(), slint::PlatformError> {
     });
 
     ui.show()?;
+    // Restore the saved size only once the window is mapped: a size set before
+    // the window is shown loses to the layout's preferred size.
+    if let Some((width, height)) = app.borrow().settings.window_size() {
+        ui.window().set_size(slint::LogicalSize::new(width as f32, height as f32));
+    }
     check_for_updates(tx.clone(), true);
     // "Connect on launch" waits for the window, so the prompt has somewhere to appear.
     let auto_connect = app.borrow().settings.auto_connect;
@@ -1150,6 +1174,7 @@ fn sync_settings(ui: &AppWindow, app: &App) {
     ui.set_autostart(app.settings.autostart);
     ui.set_auto_connect(app.settings.auto_connect);
     ui.set_notifications(app.settings.notifications);
+    ui.set_frame(app.settings.frame);
 }
 
 /// Hides the window, or quits when there is no tray icon to bring it back.

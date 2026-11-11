@@ -115,6 +115,8 @@ export global Labels {
     in property <string> auto-connect;
     in property <string> notifications;
     in property <string> notify-on;
+    in property <string> window;
+    in property <string> frame;
     in property <string> close;
 
     in property <string> remove-body-saved;
@@ -239,6 +241,55 @@ component Logo inherits Image {
     width: root.size;
     height: root.size;
     source: Theme.dark ? @image-url("../assets/ether.svg") : @image-url("../assets/ether-light.svg");
+}
+
+// The mark from the app icon, on its own: the shield outline and the keyhole in
+// the accent colour, with no tile behind them.
+//
+// The tile is an app icon: at 24px in a title bar it turns into a dark square
+// that reads as a smudge, and the icon's 11-unit outline thins out to a hairline.
+// The bare mark keeps the icon's shape and polarity — outline plus keyhole — and
+// stays legible down to 20px.
+component Shield inherits Rectangle {
+    in property <length> size: 24px;
+    in property <color> tint: Theme.accent;
+
+    width: root.size;
+    height: root.size;
+    background: transparent;
+
+    // The icon's 512-unit grid, cropped to the shield (116..396 by 92..404) plus
+    // room for the outline, and squared off around the mark's centre.
+    //
+    // Both paths carry the same stroke width: Slint fits a path into the box
+    // minus its stroke, so a keyhole without one would be scaled differently
+    // from the outline it sits in.
+    Path {
+        width: parent.width;
+        height: parent.height;
+        viewbox-x: 85;
+        viewbox-y: 77;
+        viewbox-width: 342;
+        viewbox-height: 342;
+        fill: transparent;
+        stroke: root.tint;
+        stroke-width: 1.5px;
+        stroke-line-join: round;
+        commands: "M256 92 C 302 122 346 138 396 142 C 396 236 376 330 256 404 C 136 330 116 236 116 142 C 166 138 210 122 256 92 Z";
+    }
+
+    Path {
+        width: parent.width;
+        height: parent.height;
+        viewbox-x: 85;
+        viewbox-y: 77;
+        viewbox-width: 342;
+        viewbox-height: 342;
+        fill: root.tint;
+        stroke: transparent;
+        stroke-width: 1.5px;
+        commands: "M256 202 a 42 42 0 0 1 42 42 c 0 17 -10 31 -24 38 l 16 64 q 2 10 -8 10 h -52 q -10 0 -8 -10 l 16 -64 c -14 -7 -24 -21 -24 -38 a 42 42 0 0 1 42 -42 z";
+    }
 }
 
 // A 12px line glyph: 0 log, 1 settings, 2 close.
@@ -386,13 +437,16 @@ component TitleBar inherits Rectangle {
     }
 
     HorizontalLayout {
-        x: 14px;
+        x: 16px;
         height: parent.height;
         spacing: 8px;
         alignment: start;
+        // Without this the fixed-size mark is stretched to the bar height and
+        // pinned to its top edge, where the window frame clips it.
+        cross-axis-alignment: center;
 
-        if root.show-logo: Logo {
-            size: 20px;
+        if root.show-logo: Shield {
+            size: 24px;
         }
 
         if root.spec != "": Text {
@@ -435,6 +489,7 @@ component TitleBar inherits Rectangle {
         height: parent.height;
         spacing: 6px;
         alignment: end;
+        cross-axis-alignment: center;
 
         if root.show-actions: IconButton {
             glyph: 0;
@@ -687,6 +742,7 @@ component Check inherits Rectangle {
     HorizontalLayout {
         spacing: 8px;
         alignment: start;
+        cross-axis-alignment: center;
 
         Rectangle {
             width: 18px;
@@ -773,6 +829,7 @@ component SettingRow inherits HorizontalLayout {
     in property <string> label;
     spacing: 12px;
     height: 40px;
+    cross-axis-alignment: center;
     Text {
         text: root.label;
         font-size: 13px;
@@ -952,6 +1009,7 @@ component StatusChip inherits Rectangle {
         padding-right: 11px;
         spacing: 7px;
         alignment: center;
+        cross-axis-alignment: center;
 
         Rectangle {
             width: 7px;
@@ -1099,7 +1157,10 @@ export component AppWindow inherits Window {
     default-font-size: 14px;
     default-font-family: Theme.font-family;
     // The 3px frame is the window background; the surface sits inside it.
-    background: Theme.accent;
+    // Without the frame the surface fills the window and the corners are square.
+    background: root.frame ? Theme.accent : Theme.bg-glow;
+    // Width of the frame, so the surface can inset itself by exactly that much.
+    property <length> frame-width: root.frame ? 3px : 0px;
 
     in property <[ProfileInfo]> profiles;
     // How many profiles exist, which is not the same as the filtered list above.
@@ -1162,6 +1223,8 @@ export component AppWindow inherits Window {
     in-out property <bool> autostart: false;
     in-out property <bool> auto-connect: false;
     in-out property <bool> notifications: true;
+    // Draw the coral frame around the window.
+    in-out property <bool> frame: true;
 
     in property <string> version;
     in property <UpdateState> update-state: UpdateState.idle;
@@ -1201,6 +1264,7 @@ export component AppWindow inherits Window {
     callback set-autostart(bool);
     callback set-auto-connect(bool);
     callback set-notifications(bool);
+    callback set-frame(bool);
     callback search-changed(string);
 
     property <bool> has-selection: root.selected >= 0 && root.selected < root.profile-count;
@@ -1225,6 +1289,9 @@ export component AppWindow inherits Window {
     // Drives the pulsing dot while a connection is being set up.
     property <bool> pulse-on: true;
     property <bool> show-search: root.profile-count > 2;
+    // A dialog owns the keyboard: Escape closes it and nothing else gets through.
+    property <bool> modal-open: root.settings-visible || root.add-visible || root.rename-visible
+        || root.confirm-remove >= 0 || root.auth-visible;
 
     changed search-query => {
         root.search-changed(root.search-query);
@@ -1247,11 +1314,11 @@ export component AppWindow inherits Window {
 
     // The niri frame: 3px of coral around a 26px-radius surface.
     Rectangle {
-        x: 3px;
-        y: 3px;
-        width: parent.width - 6px;
-        height: parent.height - 6px;
-        border-radius: 23px;
+        x: root.frame-width;
+        y: root.frame-width;
+        width: parent.width - 2 * root.frame-width;
+        height: parent.height - 2 * root.frame-width;
+        border-radius: root.frame ? 23px : 0px;
         background: Theme.bg-glow;
         clip: true;
 
@@ -1264,6 +1331,23 @@ export component AppWindow inherits Window {
             }
 
             key-pressed(event) => {
+                // A dialog is open: Escape closes it, everything else is its own.
+                if root.modal-open {
+                    if event.text == Key.Escape {
+                        if root.settings-visible {
+                            root.settings-visible = false;
+                        } else if root.add-visible {
+                            root.add-visible = false;
+                        } else if root.rename-visible {
+                            root.rename-visible = false;
+                        } else if root.confirm-remove >= 0 {
+                            root.confirm-remove = -1;
+                        } else if root.auth-visible {
+                            root.cancel-auth();
+                        }
+                    }
+                    return accept;
+                }
                 if event.modifiers.control && (event.text == "f" || event.text == "F") {
                     if root.show-search {
                         search.focus-input();
@@ -1319,6 +1403,8 @@ export component AppWindow inherits Window {
                     spacing: 14px;
 
                     if root.update-state != UpdateState.idle && root.update-state != UpdateState.checking: Card {
+                        // Natural height: the banner must not eat the profile list's space.
+                        vertical-stretch: 0;
                         fill: root.update-state == UpdateState.failed ? Theme.bad.transparentize(0.9) : Theme.accent-soft;
                         edge: root.update-state == UpdateState.failed ? Theme.bad.transparentize(0.6) : Theme.accent-line;
                         min-height: banner.preferred-height;
@@ -1662,6 +1748,50 @@ export component AppWindow inherits Window {
                 }
             }
         }
+
+        // A short message over the content, gone after a few seconds.
+        // A layout anchors it to the bottom: an explicit `y: parent.height - …`
+        // makes the window's preferred height depend on itself, and the window
+        // then shrinks to the height of its content whenever a toast shows up.
+        if root.toast != "": VerticalLayout {
+            alignment: end;
+            padding: 18px;
+
+            Rectangle {
+                horizontal-stretch: 1;
+                height: toast-body.preferred-height + 20px;
+                border-radius: 14px;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.line;
+                drop-shadow-color: Theme.shadow;
+                drop-shadow-blur: Theme.shadow-blur;
+                drop-shadow-offset-y: 6px;
+                clip: true;
+
+                // The 3px accent bar on the left, as on the site's toasts.
+                Rectangle {
+                    x: 0;
+                    y: 0;
+                    width: 3px;
+                    height: parent.height;
+                    background: root.toast-error ? Theme.bad : Theme.accent;
+                }
+
+                toast-body := VerticalLayout {
+                    padding-left: 16px;
+                    padding-right: 14px;
+                    padding-top: 10px;
+                    padding-bottom: 10px;
+                    Text {
+                        text: root.toast;
+                        font-size: 12.5px;
+                        wrap: word-wrap;
+                        color: root.toast-error ? Theme.bad : Theme.text-2;
+                    }
+                }
+            }
+        }
     }
 
     // Dropping .ovpn files anywhere on the window imports them.
@@ -1695,42 +1825,6 @@ export component AppWindow inherits Window {
         }
     }
 
-    // A short message over the content, gone after a few seconds.
-    if root.toast != "": Rectangle {
-        x: 18px;
-        y: parent.height - self.height - 18px;
-        width: parent.width - 36px;
-        height: toast-body.preferred-height + 20px;
-        border-radius: 14px;
-        background: Theme.surface;
-        border-width: 1px;
-        border-color: Theme.line;
-        drop-shadow-color: Theme.shadow;
-        drop-shadow-blur: Theme.shadow-blur;
-        drop-shadow-offset-y: 6px;
-        clip: true;
-
-        // The 3px accent bar on the left, as on the site's toasts.
-        Rectangle {
-            width: 3px;
-            height: parent.height;
-            background: root.toast-error ? Theme.bad : Theme.accent;
-        }
-
-        toast-body := VerticalLayout {
-            padding-left: 16px;
-            padding-right: 14px;
-            padding-top: 10px;
-            padding-bottom: 10px;
-            Text {
-                text: root.toast;
-                font-size: 12.5px;
-                wrap: word-wrap;
-                color: root.toast-error ? Theme.bad : Theme.text-2;
-            }
-        }
-    }
-
     if root.settings-visible: Modal {
         title: Labels.settings;
         cancel => {
@@ -1755,6 +1849,29 @@ export component AppWindow inherits Window {
                 current: root.theme-mode == "light" ? 1 : root.theme-mode == "system" ? 2 : 0;
                 picked(index) => {
                     root.set-theme(index == 0 ? "dark" : index == 1 ? "light" : "system");
+                }
+            }
+        }
+
+        VerticalLayout {
+            spacing: 2px;
+            Text {
+                text: Labels.window;
+                font-family: Theme.mono;
+                font-size: 10px;
+                font-weight: 700;
+                letter-spacing: 1px;
+                color: Theme.dim;
+            }
+
+            SettingRow {
+                label: Labels.frame;
+                Toggle {
+                    label: Labels.frame;
+                    checked <=> root.frame;
+                    toggled(value) => {
+                        root.set-frame(value);
+                    }
                 }
             }
         }
@@ -2158,11 +2275,14 @@ export component LogWindow inherits Window {
     preferred-height: 460px;
     default-font-size: 14px;
     default-font-family: Theme.font-family;
-    background: Theme.accent;
+    background: root.frame ? Theme.accent : Theme.bg-glow;
+    property <length> frame-width: root.frame ? 3px : 0px;
 
     in property <[LogLine]> lines;
     in property <int> count;
     in-out property <string> filter;
+    // Draw the coral frame around the window.
+    in property <bool> frame: true;
     callback copy-all();
     callback copy-diagnostics();
     callback save();
@@ -2184,11 +2304,11 @@ export component LogWindow inherits Window {
     }
 
     Rectangle {
-        x: 3px;
-        y: 3px;
-        width: parent.width - 6px;
-        height: parent.height - 6px;
-        border-radius: 23px;
+        x: root.frame-width;
+        y: root.frame-width;
+        width: parent.width - 2 * root.frame-width;
+        height: parent.height - 2 * root.frame-width;
+        border-radius: root.frame ? 23px : 0px;
         background: Theme.bg-glow;
         clip: true;
 
@@ -2281,7 +2401,8 @@ export component ProfileWindow inherits Window {
     preferred-height: 560px;
     default-font-size: 14px;
     default-font-family: Theme.font-family;
-    background: Theme.accent;
+    background: root.frame ? Theme.accent : Theme.bg-glow;
+    property <length> frame-width: root.frame ? 3px : 0px;
 
     in property <string> profile-name;
     in property <string> profile-remote;
@@ -2289,16 +2410,18 @@ export component ProfileWindow inherits Window {
     in property <[CheckLine]> checks;
     in property <bool> checking;
     in property <bool> has-risky;
+    // Draw the coral frame around the window.
+    in property <bool> frame: true;
     callback check();
     callback copy();
     callback close-window();
 
     Rectangle {
-        x: 3px;
-        y: 3px;
-        width: parent.width - 6px;
-        height: parent.height - 6px;
-        border-radius: 23px;
+        x: root.frame-width;
+        y: root.frame-width;
+        width: parent.width - 2 * root.frame-width;
+        height: parent.height - 2 * root.frame-width;
+        border-radius: root.frame ? 23px : 0px;
         background: Theme.bg-glow;
         clip: true;
 
@@ -2371,6 +2494,7 @@ export component ProfileWindow inherits Window {
                     for check in root.checks: HorizontalLayout {
                         spacing: 8px;
                         alignment: start;
+                        cross-axis-alignment: center;
                         Rectangle {
                             width: 7px;
                             height: 7px;
