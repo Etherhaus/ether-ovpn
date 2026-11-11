@@ -12,10 +12,10 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-app_id=io.github.dmitry.EtherOvpn
+app_id=io.github.etherhaus.EtherOvpn
 runtime_version=25.08
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
-maintainer="Dmitry <dmitry@users.noreply.github.com>"
+maintainer="Dmitry Etherhaus <Lehzenblad@proton.me>"
 
 cargo build --release
 rm -rf dist
@@ -50,7 +50,7 @@ Depends: openvpn (>= 2.4), pkexec | policykit-1, libc6 (>= 2.39), libgcc-s1, lib
 Recommends: xdg-desktop-portal, xdg-utils
 Section: net
 Priority: optional
-Homepage: https://github.com/dmitry/ether-ovpn
+Homepage: https://github.com/Etherhaus/ether-ovpn
 Description: Desktop client for OpenVPN profiles
  Ether imports .ovpn profiles from an OpenVPN server and connects to
  them with OpenVPN 2.4 or newer, showing status, traffic and logs, with
@@ -70,7 +70,7 @@ Version: $version
 Release: 1
 Summary: Desktop client for OpenVPN profiles
 License: MIT
-URL: https://github.com/dmitry/ether-ovpn
+URL: https://github.com/Etherhaus/ether-ovpn
 Packager: $maintainer
 Requires: openvpn >= 2.4
 Requires: /usr/bin/pkexec

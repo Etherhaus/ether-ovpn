@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.dmitry.EtherOvpn</id>
+  <id>io.github.etherhaus.EtherOvpn</id>
   <name>Ether</name>
   <summary>OpenVPN client for Linux</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
-  <developer id="io.github.dmitry">
-    <name>Dmitry</name>
+  <developer id="io.github.etherhaus">
+    <name>Dmitry Etherhaus</name>
   </developer>
   <description>
     <p>
@@ -25,21 +25,21 @@
     </ul>
     <p>Needs OpenVPN 2.4 or newer installed on the system (sudo apt install openvpn).</p>
   </description>
-  <launchable type="desktop-id">io.github.dmitry.EtherOvpn.desktop</launchable>
-  <url type="homepage">https://github.com/dmitry/ether-ovpn</url>
-  <url type="bugtracker">https://github.com/dmitry/ether-ovpn/issues</url>
+  <launchable type="desktop-id">io.github.etherhaus.EtherOvpn.desktop</launchable>
+  <url type="homepage">https://github.com/Etherhaus/ether-ovpn</url>
+  <url type="bugtracker">https://github.com/Etherhaus/ether-ovpn/issues</url>
   <screenshots>
     <screenshot type="default">
       <caption>Connected to a VPN</caption>
-      <image>https://raw.githubusercontent.com/dmitry/ether-ovpn/main/docs/screenshot.png</image>
+      <image>https://raw.githubusercontent.com/Etherhaus/ether-ovpn/main/docs/screenshot.png</image>
     </screenshot>
     <screenshot>
       <caption>Dark theme</caption>
-      <image>https://raw.githubusercontent.com/dmitry/ether-ovpn/main/docs/screenshot-dark.png</image>
+      <image>https://raw.githubusercontent.com/Etherhaus/ether-ovpn/main/docs/screenshot-dark.png</image>
     </screenshot>
     <screenshot>
       <caption>Light theme</caption>
-      <image>https://raw.githubusercontent.com/dmitry/ether-ovpn/main/docs/screenshot-light.png</image>
+      <image>https://raw.githubusercontent.com/Etherhaus/ether-ovpn/main/docs/screenshot-light.png</image>
     </screenshot>
   </screenshots>
   <content_rating type="oars-1.1"/>

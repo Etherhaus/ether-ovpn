@@ -90,7 +90,7 @@ on a random localhost port protected by a one-time password.
 ## Install
 
 OpenVPN must be installed on the system whichever package you use (see Requirements).
-Download a package from the [latest release](https://github.com/dmitry/ether-ovpn/releases/latest).
+Download a package from the [latest release](https://github.com/Etherhaus/ether-ovpn/releases/latest).
 The prebuilt packages are for x86_64.
 
 **Debian, Ubuntu, Linux Mint** (`.deb`, needs Ubuntu 24.04+, Mint 22+ or Debian 13; pulls in `openvpn`):
@@ -128,7 +128,7 @@ packaging/install.sh
 ## Releasing
 
 Bump the version in `Cargo.toml` and add a `<release>` entry to
-`packaging/io.github.dmitry.EtherOvpn.metainfo.xml`, then push a `v<version>` tag. The Release
+`packaging/io.github.etherhaus.EtherOvpn.metainfo.xml`, then push a `v<version>` tag. The Release
 workflow builds the tarball, .deb, .rpm, Flatpak and `SHA256SUMS` on Ubuntu 24.04 (so the binary
 runs on glibc 2.39 and newer), attaches them to the GitHub release for the tag and publishes it,
 which is where the in-app updater looks. To write the release notes yourself, create a draft
@@ -164,3 +164,6 @@ clipboard and downloading one from a link all work too.
 
 Ether is released under the [MIT License](LICENSE). It is built with [Slint](https://slint.dev),
 used under the Slint Royalty-free Desktop, Mobile, and Web Applications License.
+
+Ether started as a fork of [VPNdeck](https://github.com/thuutien/vpndeck) by Bryan Tran; his
+copyright notice stays in `LICENSE` next to this project's.

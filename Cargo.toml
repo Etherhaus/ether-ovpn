@@ -4,7 +4,7 @@ version = "0.3.0"
 edition = "2024"
 description = "A desktop client for OpenVPN profiles on Linux"
 license = "MIT"
-repository = "https://github.com/dmitry/ether-ovpn"
+repository = "https://github.com/Etherhaus/ether-ovpn"
 
 [dependencies]
 arboard = { version = "3.7.0", features = ["wayland-data-control"] }

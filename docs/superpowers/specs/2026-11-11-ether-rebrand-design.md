@@ -169,5 +169,5 @@ The updater reads `CARGO_PKG_REPOSITORY`, so it follows `repository` in
 
 ## Left to the builder
 
-- The owner's GitHub handle for the app id (placeholder `dmitry` until confirmed).
+- The owner's GitHub handle for the app id: `etherhaus`.
 - Whether existing `~/.config/vpndeck` profiles are migrated or re-imported.
