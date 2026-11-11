@@ -159,17 +159,30 @@ release for the tag before pushing it.
 
 `SHA256SUMS` only proves a download matches the release page. To prove the release page is
 ours, sign the files with [minisign](https://jedisct1.github.io/minisign/) and attach the
-`.minisig` files to the release:
+`.minisig` files to the release.
+
+Create the key once and keep it out of the repository:
 
 ```bash
-minisign -G                                   # once, creates ~/.minisign/minisign.key
-./packaging/sign-release.sh dist/*            # writes dist/*.minisig
+minisign -G                                   # creates ~/.minisign/minisign.key
 ```
 
-Then put the base64 line of `~/.minisign/minisign.pub` (the one after `untrusted comment:`)
-into `PUBLIC_KEY` in `src/updater.rs` and rebuild. From then on Ether refuses to install an
-update whose signature doesn't match. While `PUBLIC_KEY` is empty the check is skipped, so
-signing and filling in the key have to happen together.
+Put the base64 line of `~/.minisign/minisign.pub` (the one after `untrusted comment:`) into
+`PUBLIC_KEY` in `src/updater.rs` and rebuild. While `PUBLIC_KEY` is empty Ether skips the
+check, so the key has to be in a release before that release's users are protected.
+
+Once the Release workflow has attached the packages to the release, sign those files rather
+than a local build, or the signatures won't match what was published:
+
+```bash
+gh release download v0.3.1 -D dist
+./packaging/sign-release.sh dist/*            # writes dist/*.minisig
+gh release upload v0.3.1 dist/*.minisig
+```
+
+`sign-release.sh` refuses to sign with a key that doesn't match `PUBLIC_KEY` and checks every
+signature it writes. From then on Ether refuses to install an update whose signature is
+missing, unreadable or made with another key, and says which of those it was.
 
 ## Getting started
 
