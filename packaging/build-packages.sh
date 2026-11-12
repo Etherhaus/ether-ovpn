@@ -21,11 +21,17 @@ version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
 rpm_version=${version%%-*}
 rpm_release=1
 deb_version=$version
+deb_file_version=$version
 case $version in
   *-*)
     pre=$(printf '%s' "${version#*-}" | tr '-' '.')
     rpm_release="0.$pre"
     deb_version="${version%%-*}~$pre"
+    # The tilde belongs in the control file, where it makes dpkg sort the
+    # pre-release below the release it precedes. GitHub rewrites a tilde in an
+    # uploaded asset name to a dot, which would leave SHA256SUMS pointing at a
+    # file that doesn't exist, so the name uses the dot from the start.
+    deb_file_version="${version%%-*}.$pre"
     ;;
 esac
 maintainer="Dmitry Etherhaus <Lehzenblad@proton.me>"
@@ -69,7 +75,7 @@ Description: Desktop client for OpenVPN profiles
  them with OpenVPN 2.4 or newer, showing status, traffic and logs, with
  a system tray icon for quick connect and disconnect.
 CONTROL
-dpkg-deb --root-owner-group --build "$deb" "dist/ether-ovpn_${deb_version}_amd64.deb" >/dev/null
+dpkg-deb --root-owner-group --build "$deb" "dist/ether-ovpn_${deb_file_version}_amd64.deb" >/dev/null
 
 # --- .rpm --------------------------------------------------------------------
 # One package for Fedora and openSUSE: dependencies are on sonames and files,
