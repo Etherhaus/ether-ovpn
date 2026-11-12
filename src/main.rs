@@ -11,6 +11,7 @@ mod tray;
 mod updater;
 
 use std::cell::{Cell, RefCell};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc;
@@ -164,8 +165,9 @@ fn main() -> Result<(), slint::PlatformError> {
     // from the desktop's own startup settings.
     settings.autostart = autostart::enabled();
     let dark = settings.dark();
+    let (store, store_error) = profiles::Store::load();
     let app = Rc::new(RefCell::new(App {
-        store: profiles::Store::load(),
+        store,
         settings,
         query: String::new(),
         session: None,
@@ -267,6 +269,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             });
             window.on_save({
+                let ui_weak = ui_weak.clone();
                 let app = app.clone();
                 let saving = Rc::new(Cell::new(false));
                 move || {
@@ -276,6 +279,8 @@ fn main() -> Result<(), slint::PlatformError> {
                     let title = Strings::new(app.borrow().settings.lang()).save_log_title;
                     let text = log_text(&app.borrow().log_all);
                     let saving = saving.clone();
+                    let ui_weak = ui_weak.clone();
+                    let app = app.clone();
                     let _ = slint::spawn_local(async move {
                         let file = rfd::AsyncFileDialog::new()
                             .set_title(title)
@@ -283,8 +288,12 @@ fn main() -> Result<(), slint::PlatformError> {
                             .save_file()
                             .await;
                         saving.set(false);
-                        if let Some(file) = file {
-                            let _ = std::fs::write(file.path(), text);
+                        let Some(file) = file else { return };
+                        if let Err(e) = std::fs::write(file.path(), text) {
+                            let Some(ui) = ui_weak.upgrade() else { return };
+                            let mut app = app.borrow_mut();
+                            let t = Strings::new(app.settings.lang());
+                            toast(&ui, &mut app, i18n::fill(t.log_save_failed, &[&e.to_string()]), true);
                         }
                     });
                 }
@@ -480,7 +489,7 @@ fn main() -> Result<(), slint::PlatformError> {
             match autostart::set(on) {
                 Ok(()) => {
                     app.settings.autostart = on;
-                    let _ = app.settings.save();
+                    save_settings(&ui, &mut app);
                 }
                 Err(e) => {
                     let t = Strings::new(app.settings.lang());
@@ -492,20 +501,24 @@ fn main() -> Result<(), slint::PlatformError> {
     });
 
     ui.on_set_auto_connect({
+        let ui_weak = ui.as_weak();
         let app = app.clone();
         move |on| {
+            let Some(ui) = ui_weak.upgrade() else { return };
             let mut app = app.borrow_mut();
             app.settings.auto_connect = on;
-            let _ = app.settings.save();
+            save_settings(&ui, &mut app);
         }
     });
 
     ui.on_set_notifications({
+        let ui_weak = ui.as_weak();
         let app = app.clone();
         move |on| {
+            let Some(ui) = ui_weak.upgrade() else { return };
             let mut app = app.borrow_mut();
             app.settings.notifications = on;
-            let _ = app.settings.save();
+            save_settings(&ui, &mut app);
         }
     });
 
@@ -525,7 +538,7 @@ fn main() -> Result<(), slint::PlatformError> {
             if let Some(window) = profile_window.opened() {
                 window.set_frame(on);
             }
-            let _ = app.settings.save();
+            save_settings(&ui, &mut app);
         }
     });
 
@@ -634,6 +647,7 @@ fn main() -> Result<(), slint::PlatformError> {
     });
 
     ui.on_view_profile({
+        let ui_weak = ui.as_weak();
         let profile_window = profile_window.clone();
         let app = app.clone();
         let line_model = profile_line_model.clone();
@@ -641,15 +655,24 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(window) = profile_window.open() else { return };
             // The borrow ends before the window is touched: showing it can run
             // bindings that call back into the app.
-            let (name, remote, text) = {
+            let (name, remote, text, read_error) = {
                 let mut app = app.borrow_mut();
                 let Some(profile) = app.store.profiles.get(index as usize).cloned() else {
                     return;
                 };
                 app.viewing = Some(index as usize);
-                let text = std::fs::read_to_string(&profile.file).unwrap_or_default();
-                (profile.name, profile.remote, text)
+                match std::fs::read_to_string(&profile.file) {
+                    Ok(text) => (profile.name, profile.remote, text, None),
+                    Err(e) => (profile.name, profile.remote, String::new(), Some(e.to_string())),
+                }
             };
+            if let Some(e) = read_error
+                && let Some(ui) = ui_weak.upgrade()
+            {
+                let mut app = app.borrow_mut();
+                let t = Strings::new(app.settings.lang());
+                toast(&ui, &mut app, i18n::fill(t.profile_read_failed, &[&e]), true);
+            }
             window.set_profile_name(name.as_str().into());
             window.set_profile_remote(remote.as_str().into());
             window.set_has_risky(!profiles::risky_directives(&text).is_empty());
@@ -728,6 +751,9 @@ fn main() -> Result<(), slint::PlatformError> {
                 Err(profiles::SkipReason::Duplicate) => toast(&ui, &mut app, t.import_duplicate, true),
                 Err(profiles::SkipReason::NotProfile) => toast(&ui, &mut app, t.import_not_ovpn, true),
                 Err(profiles::SkipReason::Failed(e)) => toast(&ui, &mut app, e, true),
+                Err(profiles::SkipReason::SaveFailed(e)) => {
+                    toast(&ui, &mut app, i18n::fill(t.profiles_save_failed, &[&e]), true)
+                }
             }
         }
     });
@@ -942,7 +968,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 renamed = true;
             }
             if renamed {
-                let _ = app.store.save();
+                save_profiles(&ui, &mut app);
             }
             let t = Strings::new(app.settings.lang());
             ui.set_status_text(t.signing_in.into());
@@ -1132,7 +1158,7 @@ fn main() -> Result<(), slint::PlatformError> {
                                 if let Some(profile) = app.store.profiles.iter_mut().find(|p| p.file == file) {
                                     profile.saved_password = saved;
                                 }
-                                let _ = app.store.save();
+                                save_profiles(&ui, &mut app);
                                 sync_profiles(&ui, &app.store, &profile_model, &app.query);
                             }
                             Err(e) => {
@@ -1169,6 +1195,9 @@ fn main() -> Result<(), slint::PlatformError> {
                                 Err(profiles::SkipReason::Duplicate) => toast(&ui, &mut app, t.import_duplicate, true),
                                 Err(profiles::SkipReason::NotProfile) => toast(&ui, &mut app, t.import_not_ovpn, true),
                                 Err(profiles::SkipReason::Failed(e)) => toast(&ui, &mut app, e, true),
+                                Err(profiles::SkipReason::SaveFailed(e)) => {
+                                    toast(&ui, &mut app, i18n::fill(t.profiles_save_failed, &[&e]), true)
+                                }
                             },
                             Ok(_) => toast(&ui, &mut app, t.import_url_not_profile, true),
                             Err(e) => toast(&ui, &mut app, i18n::fill(t.import_url_failed, &[&e]), true),
@@ -1211,6 +1240,15 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    if let Some(e) = store_error {
+        let t = Strings::new(app.borrow().settings.lang());
+        toast(
+            &ui,
+            &mut app.borrow_mut(),
+            i18n::fill(t.profiles_save_failed, &[&e.to_string()]),
+            true,
+        );
+    }
     ui.show()?;
     // Restore the saved size only once the window is mapped: a size set before
     // the window is shown loses to the layout's preferred size.
@@ -1293,7 +1331,10 @@ fn save_window_size(ui: &AppWindow, app: &mut App) {
     }
     if app.settings.window_size() != Some((width, height)) {
         app.settings.set_window_size(width, height);
-        let _ = app.settings.save();
+        // The window is on its way out, so a toast would never be seen.
+        if let Err(e) = app.settings.save() {
+            eprintln!("ether-ovpn: cannot save the window size: {e}");
+        }
     }
 }
 
@@ -1481,7 +1522,8 @@ fn handle_event(
                         save_passwords(&tx, file, std::mem::take(&mut app.pending_save));
                     }
                     if let Some(index) = app.active {
-                        app.store.touch(index);
+                        let touched = app.store.touch(index);
+                        report_save(ui, app, touched, t.profiles_save_failed);
                     }
                     if app.settings.notifications {
                         let name = app
@@ -1656,6 +1698,7 @@ fn import_paths(ui: &AppWindow, app: &mut App, model: &VecModel<ProfileInfo>, pa
             profiles::SkipReason::Duplicate => t.import_duplicate.to_string(),
             profiles::SkipReason::NotProfile => t.import_not_ovpn.to_string(),
             profiles::SkipReason::Failed(e) => e.clone(),
+            profiles::SkipReason::SaveFailed(e) => i18n::fill(t.profiles_save_failed, &[e]),
         })
         .collect();
     if !report.imported.is_empty() || !reasons.is_empty() {
@@ -1664,11 +1707,15 @@ fn import_paths(ui: &AppWindow, app: &mut App, model: &VecModel<ProfileInfo>, pa
             summary.push(' ');
             summary.push_str(&i18n::fill(t.import_scripts, &[&report.scripts.join(", ")]));
         }
+        if let Some(e) = &report.save_error {
+            summary.push(' ');
+            summary.push_str(&i18n::fill(t.profiles_save_failed, &[e]));
+        }
         toast(
             ui,
             app,
             summary,
-            report.imported.is_empty() || !report.scripts.is_empty(),
+            report.imported.is_empty() || !report.scripts.is_empty() || report.save_error.is_some(),
         );
     }
     sync_profiles(ui, &app.store, model, &app.query);
@@ -1834,6 +1881,28 @@ fn update_card_name(ui: &AppWindow, app: &App) {
     let profile = usize::try_from(index).ok().and_then(|i| app.store.profiles.get(i));
     ui.set_card_name(profile.map(|p| p.name.as_str()).unwrap_or("").into());
     ui.set_card_remote(profile.map(|p| p.remote.as_str()).unwrap_or("").into());
+}
+
+/// Saves the settings, telling the user when the write fails: a setting that
+/// quietly doesn't stick is worse than a toast.
+fn save_settings(ui: &AppWindow, app: &mut App) {
+    let result = app.settings.save();
+    let template = Strings::new(app.settings.lang()).settings_save_failed;
+    report_save(ui, app, result, template);
+}
+
+/// The same for the profile list.
+fn save_profiles(ui: &AppWindow, app: &mut App) {
+    let result = app.store.save();
+    let template = Strings::new(app.settings.lang()).profiles_save_failed;
+    report_save(ui, app, result, template);
+}
+
+/// Reports a failed write, if any, with the message the caller picked.
+fn report_save(ui: &AppWindow, app: &mut App, result: io::Result<()>, template: &str) {
+    if let Err(e) = result {
+        toast(ui, app, i18n::fill(template, &[&e.to_string()]), true);
+    }
 }
 
 /// Shows a message over the window for a few seconds.

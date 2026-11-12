@@ -253,6 +253,13 @@ labels! {
         "Lost the connection to OpenVPN. The tunnel may still be up — stop it with sudo pkill openvpn.",
         "Связь с OpenVPN потеряна. Туннель мог остаться поднятым — остановите его командой sudo pkill openvpn."
     ),
+    settings_save_failed => ("Couldn't save the settings: {}", "Не удалось сохранить настройки: {}"),
+    profiles_save_failed => (
+        "Couldn't save the profile list: {}",
+        "Не удалось сохранить список профилей: {}"
+    ),
+    log_save_failed => ("Couldn't save the log: {}", "Не удалось сохранить журнал: {}"),
+    profile_read_failed => ("Couldn't read the profile: {}", "Не удалось прочитать профиль: {}"),
     notify_tray => ("Ether keeps running in the tray.", "Ether продолжает работать в трее."),
     reconnecting_attempt => (
         "Reconnecting… (attempt {} of {})",
