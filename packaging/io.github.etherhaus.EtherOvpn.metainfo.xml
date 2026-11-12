@@ -2,7 +2,13 @@
 <component type="desktop-application">
   <id>io.github.etherhaus.EtherOvpn</id>
   <name>Ether</name>
-  <summary>OpenVPN client for Linux</summary>
+  <summary>OpenVPN client for Linux (ether-ovpn)</summary>
+  <keywords>
+    <keyword>ether</keyword>
+    <keyword>ether-ovpn</keyword>
+    <keyword>openvpn</keyword>
+    <keyword>vpn</keyword>
+  </keywords>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <developer id="io.github.etherhaus">
