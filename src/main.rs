@@ -15,6 +15,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use slint::{CloseRequestResponse, ComponentHandle, Model, ModelRc, SharedString, VecModel};
@@ -55,6 +56,9 @@ enum Msg {
         saved: bool,
         result: Result<(), String>,
     },
+    /// The `pkexec kill` fallback for a session whose management connection is
+    /// gone. `Ok` means the signal was sent; the process still has to exit.
+    Killed(Result<(), String>),
     /// A profile downloaded from a link, ready to import.
     Fetched {
         name: String,
@@ -902,17 +906,24 @@ fn main() -> Result<(), slint::PlatformError> {
             let mut app = app.borrow_mut();
             app.was_connected = false;
             app.retry = None;
-            match app.session.as_ref().map(|session| session.disconnect()) {
-                None => {}
-                Some(true) => {
-                    ui.set_conn_state(ConnState::Disconnecting);
-                    let t = Strings::new(app.settings.lang());
-                    ui.set_status_text(t.disconnecting.into());
-                }
-                Some(false) => {
-                    let t = Strings::new(app.settings.lang());
-                    toast(&ui, &mut app, t.disconnect_failed, true);
-                }
+            let Some(session) = app.session.clone() else { return };
+            if session.disconnect() {
+                ui.set_conn_state(ConnState::Disconnecting);
+                let t = Strings::new(app.settings.lang());
+                ui.set_status_text(t.disconnecting.into());
+            } else {
+                // The management connection is gone, so the only way left to
+                // stop the tunnel is to kill the child we started. pkexec
+                // waits on the polkit prompt, so it runs off this thread and
+                // reports back through the channel.
+                let tx = app.tx.clone();
+                thread::spawn(move || {
+                    let result = session.kill().map_err(|e| e.to_string());
+                    let _ = tx.send(Msg::Killed(result));
+                });
+                ui.set_conn_state(ConnState::Disconnecting);
+                let t = Strings::new(app.settings.lang());
+                ui.set_status_text(t.disconnecting.into());
             }
         }
     });
@@ -1017,17 +1028,24 @@ fn main() -> Result<(), slint::PlatformError> {
             app.cr_challenge = None;
             app.was_connected = false;
             app.retry = None;
-            match app.session.as_ref().map(|session| session.disconnect()) {
-                None => {}
-                Some(true) => {
-                    ui.set_conn_state(ConnState::Disconnecting);
-                    let t = Strings::new(app.settings.lang());
-                    ui.set_status_text(t.disconnecting.into());
-                }
-                Some(false) => {
-                    let t = Strings::new(app.settings.lang());
-                    toast(&ui, &mut app, t.disconnect_failed, true);
-                }
+            let Some(session) = app.session.clone() else { return };
+            if session.disconnect() {
+                ui.set_conn_state(ConnState::Disconnecting);
+                let t = Strings::new(app.settings.lang());
+                ui.set_status_text(t.disconnecting.into());
+            } else {
+                // The management connection is gone, so the only way left to
+                // stop the tunnel is to kill the child we started. pkexec
+                // waits on the polkit prompt, so it runs off this thread and
+                // reports back through the channel.
+                let tx = app.tx.clone();
+                thread::spawn(move || {
+                    let result = session.kill().map_err(|e| e.to_string());
+                    let _ = tx.send(Msg::Killed(result));
+                });
+                ui.set_conn_state(ConnState::Disconnecting);
+                let t = Strings::new(app.settings.lang());
+                ui.set_status_text(t.disconnecting.into());
             }
         }
     });
@@ -1182,6 +1200,15 @@ fn main() -> Result<(), slint::PlatformError> {
                                 };
                                 toast(&ui, &mut app, i18n::fill(template, &[&e.to_string()]), true);
                             }
+                        }
+                    }
+                    Msg::Killed(result) => {
+                        // A kill that went through still has to be confirmed by
+                        // the process exiting, which arrives as Event::Exited.
+                        if let Err(e) = result {
+                            let mut app = app.borrow_mut();
+                            let t = Strings::new(app.settings.lang());
+                            toast(&ui, &mut app, i18n::fill(t.stop_failed, &[&e]), true);
                         }
                     }
                     Msg::Fetched { name, result } => {

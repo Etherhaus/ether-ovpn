@@ -75,8 +75,12 @@ struct Shared {
     /// Set when the management connection is gone for good, so a stop request
     /// has nowhere to go.
     lost: AtomicBool,
+    /// The child we spawned. pkexec execs openvpn, so this is openvpn's own
+    /// pid, and naming it is what keeps `kill` off other openvpn processes.
+    pid: u32,
 }
 
+#[derive(Clone)]
 pub struct Session {
     shared: Arc<Shared>,
 }
@@ -100,14 +104,8 @@ impl Session {
         let pw_file = write_secret(port, &secret)?;
         let workdir = workdir.or(config.parent()).unwrap_or(Path::new("/")).to_path_buf();
 
-        let mut cmd = if crate::sandboxed() {
-            let mut cmd = Command::new("flatpak-spawn");
-            cmd.args(["--host", "pkexec"]);
-            cmd
-        } else {
-            Command::new("pkexec")
-        };
-        cmd.arg(openvpn)
+        let mut cmd = privileged(openvpn, crate::sandboxed());
+        cmd
             // --cd must come before --config so relative paths inside the profile resolve.
             .arg("--cd")
             .arg(&workdir)
@@ -144,6 +142,7 @@ impl Session {
             stop_requested: AtomicBool::new(false),
             exited: AtomicBool::new(false),
             lost: AtomicBool::new(false),
+            pid: child.id(),
         });
 
         // Both pipes were asked for above, so they are always there.
@@ -204,8 +203,8 @@ impl Session {
         self.send(&format!("cr-response {}", base64(code)));
     }
 
-    /// Asks openvpn to stop. Returns false when the management connection is
-    /// gone, so the caller can say so instead of pretending it worked.
+    /// Asks openvpn to stop through the management connection. Returns false
+    /// when that connection is gone, so the caller can fall back to `kill`.
     ///
     /// While the connection is still being set up the request is honoured as
     /// soon as it is, so only a lost connection counts as a failure.
@@ -218,9 +217,44 @@ impl Session {
         true
     }
 
+    /// Stops openvpn when the management connection can't reach it.
+    ///
+    /// `pkexec kill <pid>` names the child we spawned, so another openvpn on
+    /// the machine — a server, say — is left alone. By this point the caller
+    /// has already asked nicely through the management connection.
+    pub fn kill(&self) -> io::Result<()> {
+        let status = kill_command(self.shared.pid, crate::sandboxed()).status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(io::Error::other(format!("pkexec kill exited with {status}")))
+        }
+    }
+
     fn send(&self, line: &str) {
         send(&self.shared, line);
     }
+}
+
+/// Runs a program as root: `pkexec`, or `flatpak-spawn --host pkexec` inside
+/// the Flatpak build, where openvpn can only run on the host.
+fn privileged(program: &str, sandboxed: bool) -> Command {
+    if sandboxed {
+        let mut cmd = Command::new("flatpak-spawn");
+        cmd.args(["--host", "pkexec", program]);
+        cmd
+    } else {
+        let mut cmd = Command::new("pkexec");
+        cmd.arg(program);
+        cmd
+    }
+}
+
+/// The command that stops the process we started, by pid.
+fn kill_command(pid: u32, sandboxed: bool) -> Command {
+    let mut cmd = privileged("kill", sandboxed);
+    cmd.arg(pid.to_string());
+    cmd
 }
 
 /// The management stream, ignoring a poisoned lock: it only ever guards a
@@ -727,6 +761,7 @@ mod tests {
             stop_requested: AtomicBool::new(false),
             exited: AtomicBool::new(false),
             lost: AtomicBool::new(false),
+            pid: 4242,
         });
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
@@ -803,6 +838,7 @@ mod tests {
             stop_requested: AtomicBool::new(false),
             exited: AtomicBool::new(false),
             lost: AtomicBool::new(false),
+            pid: 4242,
         });
         let (tx, rx) = std::sync::mpsc::channel();
         let emit: Emit = Arc::new(move |ev| {
@@ -834,6 +870,7 @@ mod tests {
             stop_requested: AtomicBool::new(false),
             exited: AtomicBool::new(false),
             lost: AtomicBool::new(false),
+            pid: 4242,
         });
         let session = Session { shared: shared.clone() };
         assert!(session.disconnect());
@@ -841,6 +878,23 @@ mod tests {
 
         shared.lost.store(true, Ordering::SeqCst);
         assert!(!session.disconnect());
+    }
+
+    /// The stop that works when the management connection is gone names the
+    /// child we spawned, so a server openvpn on the same machine is untouched.
+    #[test]
+    fn kill_names_the_child_we_started() {
+        let cmd = kill_command(4242, false);
+        assert_eq!(cmd.get_program(), "pkexec");
+        assert_eq!(cmd.get_args().collect::<Vec<_>>(), ["kill", "4242"]);
+    }
+
+    /// Inside the Flatpak the kill has to run on the host, like openvpn does.
+    #[test]
+    fn kill_goes_through_the_host_inside_flatpak() {
+        let cmd = kill_command(4242, true);
+        assert_eq!(cmd.get_program(), "flatpak-spawn");
+        assert_eq!(cmd.get_args().collect::<Vec<_>>(), ["--host", "pkexec", "kill", "4242"]);
     }
 
     #[test]
@@ -852,6 +906,7 @@ mod tests {
             stop_requested: AtomicBool::new(false),
             exited: AtomicBool::new(false),
             lost: AtomicBool::new(false),
+            pid: 4242,
         });
         let (tx, rx) = std::sync::mpsc::channel();
         let emit: Emit = Arc::new(move |ev| {

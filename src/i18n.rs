@@ -250,13 +250,10 @@ labels! {
     notify_disconnected => ("Disconnected", "Отключено"),
     notify_failed => ("Connection failed: {}", "Подключение не удалось: {}"),
     connection_lost => (
-        "Lost the connection to OpenVPN. The tunnel may still be up — stop it with sudo pkill openvpn.",
-        "Связь с OpenVPN потеряна. Туннель мог остаться поднятым — остановите его командой sudo pkill openvpn."
+        "Lost the connection to OpenVPN. The tunnel may still be up — Disconnect stops it.",
+        "Связь с OpenVPN потеряна. Туннель мог остаться поднятым — «Отключить» его остановит."
     ),
-    disconnect_failed => (
-        "OpenVPN isn't answering, so it can't be stopped from here. Stop it with sudo pkill openvpn.",
-        "OpenVPN не отвечает, отсюда его не остановить. Остановите командой sudo pkill openvpn."
-    ),
+    stop_failed => ("Couldn't stop OpenVPN: {}", "Не удалось остановить OpenVPN: {}"),
     settings_save_failed => ("Couldn't save the settings: {}", "Не удалось сохранить настройки: {}"),
     profiles_save_failed => (
         "Couldn't save the profile list: {}",
