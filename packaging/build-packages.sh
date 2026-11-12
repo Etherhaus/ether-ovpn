@@ -15,6 +15,19 @@ cd "$(dirname "$0")/.."
 app_id=io.github.etherhaus.EtherOvpn
 runtime_version=25.08
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+# A pre-release (0.3.2-beta.1) can't go into an RPM Version, which forbids a
+# dash, and in Debian it would sort above the release it precedes. Each format
+# gets the pre-release part where it belongs: RPM's Release, Debian's tilde.
+rpm_version=${version%%-*}
+rpm_release=1
+deb_version=$version
+case $version in
+  *-*)
+    pre=$(printf '%s' "${version#*-}" | tr '-' '.')
+    rpm_release="0.$pre"
+    deb_version="${version%%-*}~$pre"
+    ;;
+esac
 maintainer="Dmitry Etherhaus <Lehzenblad@proton.me>"
 
 cargo build --release
@@ -42,7 +55,7 @@ install -Dm644 LICENSE "$deb/usr/share/doc/ether-ovpn/copyright"
 mkdir -p "$deb/DEBIAN"
 cat > "$deb/DEBIAN/control" <<CONTROL
 Package: ether-ovpn
-Version: $version
+Version: $deb_version
 Architecture: amd64
 Maintainer: $maintainer
 Installed-Size: $(du -sk "$deb/usr" | cut -f1)
@@ -56,7 +69,7 @@ Description: Desktop client for OpenVPN profiles
  them with OpenVPN 2.4 or newer, showing status, traffic and logs, with
  a system tray icon for quick connect and disconnect.
 CONTROL
-dpkg-deb --root-owner-group --build "$deb" "dist/ether-ovpn_${version}_amd64.deb" >/dev/null
+dpkg-deb --root-owner-group --build "$deb" "dist/ether-ovpn_${deb_version}_amd64.deb" >/dev/null
 
 # --- .rpm --------------------------------------------------------------------
 # One package for Fedora and openSUSE: dependencies are on sonames and files,
@@ -66,8 +79,8 @@ rpm="$work/rpm"
 mkdir -p "$rpm/SPECS"
 cat > "$rpm/SPECS/ether-ovpn.spec" <<SPEC
 Name: ether-ovpn
-Version: $version
-Release: 1
+Version: $rpm_version
+Release: $rpm_release
 Summary: Desktop client for OpenVPN profiles
 License: MIT
 URL: https://github.com/Etherhaus/ether-ovpn
@@ -104,7 +117,7 @@ install -Dm644 $PWD/LICENSE %{buildroot}/usr/share/licenses/ether-ovpn/LICENSE
 SPEC
 rpmbuild -bb --quiet --define "_topdir $rpm" --define "debug_package %{nil}" --define "__strip /bin/true" \
   "$rpm/SPECS/ether-ovpn.spec"
-cp "$rpm/RPMS/x86_64/ether-ovpn-$version-1.x86_64.rpm" dist/
+cp "$rpm/RPMS/x86_64/ether-ovpn-$rpm_version-$rpm_release.x86_64.rpm" dist/
 
 # --- Flatpak -----------------------------------------------------------------
 # OpenVPN has to run as root on the host, so the app starts it through

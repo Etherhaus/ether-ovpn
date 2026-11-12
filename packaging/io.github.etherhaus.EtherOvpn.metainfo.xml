@@ -50,6 +50,12 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.3.2-beta.1" date="2026-11-13" type="development">
+      <description>
+        <p>Adds an update channel. The stable channel offers only finished releases; the beta channel also offers pre-releases, and falls back to the latest stable while none has been published.</p>
+        <p>The updater now picks the highest version instead of the most recently published one, so a patch to an older line can no longer hide a newer release, and it compares pre-release versions the way semver does, so a beta user is offered beta.2 after beta.1.</p>
+      </description>
+    </release>
     <release version="0.3.1" date="2026-11-12">
       <description>
         <p>Checks the minisign signature of every update before installing it, so a compromised GitHub account can no longer push code to users. Releases are published as drafts and go live only after their files are signed.</p>
