@@ -148,9 +148,10 @@ packaging/install.sh
 Bump the version in `Cargo.toml` and add a `<release>` entry to
 `packaging/io.github.etherhaus.EtherOvpn.metainfo.xml`, then push a `v<version>` tag. The Release
 workflow builds the tarball, .deb, .rpm, Flatpak and `SHA256SUMS` on Ubuntu 24.04 (so the binary
-runs on glibc 2.39 and newer), attaches them to the GitHub release for the tag and publishes it,
-which is where the in-app updater looks. To write the release notes yourself, create a draft
-release for the tag before pushing it.
+runs on glibc 2.39 and newer) and attaches them to the GitHub release for the tag, which it
+leaves as a draft. Sign the files, upload the `.minisig` ones and publish the release by hand —
+the in-app updater doesn't see drafts, so nobody is offered an unsigned update in the meantime.
+To write the release notes yourself, create a draft release for the tag before pushing it.
 
 `./packaging/build-packages.sh` builds the same files into `dist/` locally (needs `dpkg-deb`,
 `rpmbuild`, `flatpak` and the `org.freedesktop.Platform//25.08` runtime).
@@ -171,13 +172,14 @@ Put the base64 line of `~/.minisign/minisign.pub` (the one after `untrusted comm
 `PUBLIC_KEY` in `src/updater.rs` and rebuild. While `PUBLIC_KEY` is empty Ether skips the
 check, so the key has to be in a release before that release's users are protected.
 
-Once the Release workflow has attached the packages to the release, sign those files rather
-than a local build, or the signatures won't match what was published:
+Once the Release workflow has attached the packages to the draft release, sign those files
+rather than a local build, or the signatures won't match what was published, then publish it:
 
 ```bash
 gh release download v0.3.1 -D dist
 ./packaging/sign-release.sh dist/*            # writes dist/*.minisig
 gh release upload v0.3.1 dist/*.minisig
+gh release edit v0.3.1 --draft=false --latest
 ```
 
 `sign-release.sh` refuses to sign with a key that doesn't match `PUBLIC_KEY` and checks every

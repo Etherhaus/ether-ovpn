@@ -1,7 +1,8 @@
 # Builds the release packages on Ubuntu 24.04, so the binary runs on glibc 2.39
 # and newer, and attaches them to the GitHub release for the pushed tag.
-# Write the release notes on a draft release for the tag before pushing it;
-# this workflow publishes the release once the files are attached.
+# The release is left as a draft: sign the attached files, upload the .minisig
+# ones, then publish it by hand. The updater doesn't see drafts, so nobody is
+# offered an unsigned update in the meantime.
 name: Release
 
 on:
@@ -36,7 +37,7 @@ jobs:
 
       - run: packaging/build-packages.sh
 
-      - name: Attach the packages and publish the release
+      - name: Attach the packages
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -44,4 +45,3 @@ jobs:
           gh release view "$tag" >/dev/null 2>&1 ||
             gh release create "$tag" --draft --title "Ether ${tag#v}" --notes ""
           gh release upload "$tag" dist/* --clobber
-          gh release edit "$tag" --draft=false --latest
