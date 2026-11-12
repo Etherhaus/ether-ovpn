@@ -49,10 +49,14 @@ up for you.
 cargo fmt
 cargo clippy
 cargo test
+cargo audit   # once: cargo install cargo-audit --locked
 ```
 
 - A behaviour change comes with a test. The existing ones sit next to the code they cover, in
   the same file.
+- Dependency bumps come from Dependabot: one grouped pull request a week for patch and minor
+  updates, a separate one for each major. CI runs `cargo audit` on every pull request — a real
+  vulnerability fails the build, an unmaintained or yanked crate is only reported.
 - A UI change comes with a screenshot in the pull request, in both themes if the change touches
   colours.
 - One topic per pull request. Unrelated cleanups in the same branch make the diff hard to read.
@@ -160,10 +164,15 @@ cargo test
 cargo fmt
 cargo clippy
 cargo test
+cargo audit   # один раз: cargo install cargo-audit --locked
 ```
 
 - Изменение поведения идёт вместе с тестом. Существующие тесты лежат рядом с кодом, в том же
   файле.
+- Обновления зависимостей приходят от Dependabot: раз в неделю один сгруппированный pull
+  request на patch- и minor-версии и отдельный на каждый major. CI гоняет `cargo audit` на
+  каждом pull request — настоящая уязвимость роняет сборку, ненужный (unmaintained) или
+  отозванный (yanked) крейт только попадает в отчёт.
 - Изменение интерфейса идёт вместе со скриншотом в pull request — в обеих темах, если затронуты
   цвета.
 - Одна тема на pull request. Посторонние уборки в той же ветке делают дифф нечитаемым.
