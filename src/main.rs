@@ -1257,7 +1257,7 @@ fn main() -> Result<(), slint::PlatformError> {
         toast(
             &ui,
             &mut app.borrow_mut(),
-            i18n::fill(t.profiles_save_failed, &[&e.to_string()]),
+            i18n::fill(t.profiles_migration_failed, &[&e.to_string()]),
             true,
         );
     }

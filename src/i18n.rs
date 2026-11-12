@@ -262,6 +262,10 @@ labels! {
         "Couldn't save the profile list: {}",
         "Не удалось сохранить список профилей: {}"
     ),
+    profiles_migration_failed => (
+        "The profiles work, but the updated list won't be saved: {}",
+        "Профили работают, но обновлённый список не сохранится: {}"
+    ),
     log_save_failed => ("Couldn't save the log: {}", "Не удалось сохранить журнал: {}"),
     profile_read_failed => ("Couldn't read the profile: {}", "Не удалось прочитать профиль: {}"),
     notify_tray => ("Ether keeps running in the tray.", "Ether продолжает работать в трее."),
