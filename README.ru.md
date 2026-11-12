@@ -10,6 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/Etherhaus/ether-ovpn/releases/latest"><img alt="Последний релиз" src="https://img.shields.io/github/v/release/Etherhaus/ether-ovpn?color=d9531e&labelColor=16161a"></a>
+  <a href="https://github.com/Etherhaus/ether-ovpn/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Etherhaus/ether-ovpn/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="Лицензия MIT" src="https://img.shields.io/github/license/Etherhaus/ether-ovpn?color=d9531e&labelColor=16161a"></a>
   <img alt="Linux" src="https://img.shields.io/badge/platform-linux-d9531e?labelColor=16161a">
 </p>
@@ -149,52 +150,40 @@ cargo build --release
 packaging/install.sh
 ```
 
-`SHA256SUMS` в каждом релизе содержит контрольные суммы файлов.
+**Проверка скачивания.**
 
-## Выпуск релиза
-
-Поднимите версию в `Cargo.toml` и добавьте запись `<release>` в
-`packaging/io.github.etherhaus.EtherOvpn.metainfo.xml`, затем запушьте тег `v<версия>`. Workflow
-Release соберёт тарбол, .deb, .rpm, Flatpak и `SHA256SUMS` на Ubuntu 24.04 (чтобы бинарник
-работал на glibc 2.39 и новее) и приложит их к релизу на GitHub для этого тега, оставив релиз
-черновиком. Подпишите файлы, залейте `.minisig` и опубликуйте релиз руками — встроенный
-обновлятор черновики не видит, так что неподписанное обновление никому не предложат. Если хотите
-написать заметки к релизу сами, создайте черновик релиза для тега до пуша.
-
-`./packaging/build-packages.sh` собирает те же файлы в `dist/` локально (нужны `dpkg-deb`,
-`rpmbuild`, `flatpak` и рантайм `org.freedesktop.Platform//25.08`).
-
-### Подпись релизов
-
-`SHA256SUMS` доказывает только то, что скачанный файл совпадает со страницей релиза. Чтобы
-доказать, что страница релиза наша, подпишите файлы через
-[minisign](https://jedisct1.github.io/minisign/) и приложите `.minisig` к релизу.
-
-Ключ создаётся один раз и хранится вне репозитория:
+`SHA256SUMS` в каждом релизе содержит контрольные суммы файлов:
 
 ```bash
-minisign -G                                   # создаёт ~/.minisign/minisign.key
+sha256sum -c SHA256SUMS
 ```
 
-Вставьте base64-строку из `~/.minisign/minisign.pub` (ту, что идёт после `untrusted comment:`)
-в `PUBLIC_KEY` в `src/updater.rs` и пересоберите. Пока `PUBLIC_KEY` пуст, Ether проверку
-пропускает, поэтому ключ должен попасть в релиз раньше, чем его пользователи окажутся под
-защитой.
-
-Когда workflow Release приложил пакеты к черновику релиза, подписывайте именно их, а не
-локальную сборку, иначе подписи не совпадут с опубликованными файлами, а затем опубликуйте:
+Это доказывает, что скачанный файл совпадает со страницей релиза. Чтобы доказать, что сам релиз
+наш, каждый пакет дополнительно подписан через
+[minisign](https://jedisct1.github.io/minisign/) — рядом лежит файл `.minisig`:
 
 ```bash
-gh release download v0.3.1 -D dist
-./packaging/sign-release.sh dist/*            # пишет dist/*.minisig
-gh release upload v0.3.1 dist/*.minisig
-gh release edit v0.3.1 --draft=false --latest
+minisign -Vm ether-ovpn_<версия>_amd64.deb -P RWQKf1RWL1og9LBKjOF0YnSYW28sXfp4B1wCTZ76/A1Z6sQCiESxB4Aw
 ```
 
-`sign-release.sh` отказывается подписывать ключом, который не совпадает с `PUBLIC_KEY`, и
-проверяет каждую записанную подпись. С этого момента Ether отказывается ставить обновление,
-подпись которого отсутствует, не читается или сделана другим ключом, и говорит, что именно
-случилось.
+Ключ тот же, по которому `src/updater.rs` проверяет обновления (key id `0A7F54562F5A20F4`):
+файл, прошедший проверку, — это ровно тот файл, который Ether ставит сам себе. minisign есть в
+большинстве дистрибутивов.
+
+## Безопасность
+
+- Ether работает без root: всё привилегированное идёт через `pkexec`, который спрашивает пароль
+  у polkit.
+- Management-порт OpenVPN доступен только на localhost и защищён одноразовым паролем, который
+  создаётся заново на каждую сессию.
+- Пароли подключений хранятся в системной связке ключей, а не в файлах.
+- Обновления проверяются через minisign: ключ релиза зашит в бинарник, сборка без валидной
+  подписи не установится. Единственное честное исключение — переход с 0.3.0 на 0.3.1: старая
+  сборка ключа ещё не знает, всё после неё подписано.
+- Конфиг OpenVPN — не песочница: скрипты `up`, `down` и другие внутри него выполняются от
+  root. Запускай только те конфиги, которым доверяешь.
+- Сборка Flatpak публикуется, но модель привилегий (pkexec, связка ключей) обкатана на
+  нативных пакетах — если есть выбор, бери .deb или .rpm.
 
 ## С чего начать
 
@@ -206,7 +195,8 @@ gh release edit v0.3.1 --draft=false --latest
 ## Участие
 
 Баг-репорты и pull request'ы приветствуются — в [CONTRIBUTING.md](CONTRIBUTING.md) есть шаги
-сборки и карта кода. Об уязвимости пишите по [SECURITY.md](SECURITY.md), а не в публичный issue.
+сборки, карта кода и процесс выпуска релизов. Об уязвимости пишите по
+[SECURITY.md](SECURITY.md), а не в публичный issue.
 
 ## Лицензия
 

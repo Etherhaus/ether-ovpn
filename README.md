@@ -10,6 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/Etherhaus/ether-ovpn/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Etherhaus/ether-ovpn?color=d9531e&labelColor=16161a"></a>
+  <a href="https://github.com/Etherhaus/ether-ovpn/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Etherhaus/ether-ovpn/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/Etherhaus/ether-ovpn?color=d9531e&labelColor=16161a"></a>
   <img alt="Linux" src="https://img.shields.io/badge/platform-linux-d9531e?labelColor=16161a">
 </p>
@@ -142,50 +143,40 @@ cargo build --release
 packaging/install.sh
 ```
 
-`SHA256SUMS` in each release lists the checksums of the files.
+**Verifying a download.**
 
-## Releasing
-
-Bump the version in `Cargo.toml` and add a `<release>` entry to
-`packaging/io.github.etherhaus.EtherOvpn.metainfo.xml`, then push a `v<version>` tag. The Release
-workflow builds the tarball, .deb, .rpm, Flatpak and `SHA256SUMS` on Ubuntu 24.04 (so the binary
-runs on glibc 2.39 and newer) and attaches them to the GitHub release for the tag, which it
-leaves as a draft. Sign the files, upload the `.minisig` ones and publish the release by hand —
-the in-app updater doesn't see drafts, so nobody is offered an unsigned update in the meantime.
-To write the release notes yourself, create a draft release for the tag before pushing it.
-
-`./packaging/build-packages.sh` builds the same files into `dist/` locally (needs `dpkg-deb`,
-`rpmbuild`, `flatpak` and the `org.freedesktop.Platform//25.08` runtime).
-
-### Signing releases
-
-`SHA256SUMS` only proves a download matches the release page. To prove the release page is
-ours, sign the files with [minisign](https://jedisct1.github.io/minisign/) and attach the
-`.minisig` files to the release.
-
-Create the key once and keep it out of the repository:
+`SHA256SUMS` in each release lists the checksums of the files:
 
 ```bash
-minisign -G                                   # creates ~/.minisign/minisign.key
+sha256sum -c SHA256SUMS
 ```
 
-Put the base64 line of `~/.minisign/minisign.pub` (the one after `untrusted comment:`) into
-`PUBLIC_KEY` in `src/updater.rs` and rebuild. While `PUBLIC_KEY` is empty Ether skips the
-check, so the key has to be in a release before that release's users are protected.
-
-Once the Release workflow has attached the packages to the draft release, sign those files
-rather than a local build, or the signatures won't match what was published, then publish it:
+That proves the file matches the release page. To prove the release itself is ours, every package
+also carries a [minisign](https://jedisct1.github.io/minisign/) signature — the `.minisig` file
+next to it:
 
 ```bash
-gh release download v0.3.1 -D dist
-./packaging/sign-release.sh dist/*            # writes dist/*.minisig
-gh release upload v0.3.1 dist/*.minisig
-gh release edit v0.3.1 --draft=false --latest
+minisign -Vm ether-ovpn_<version>_amd64.deb -P RWQKf1RWL1og9LBKjOF0YnSYW28sXfp4B1wCTZ76/A1Z6sQCiESxB4Aw
 ```
 
-`sign-release.sh` refuses to sign with a key that doesn't match `PUBLIC_KEY` and checks every
-signature it writes. From then on Ether refuses to install an update whose signature is
-missing, unreadable or made with another key, and says which of those it was.
+The key is the one `src/updater.rs` checks updates against (key id `0A7F54562F5A20F4`), so a file
+that passes this check is the same file Ether installs on itself. minisign is packaged by most
+distributions.
+
+## Security
+
+- Ether runs unprivileged: everything privileged goes through `pkexec`, which asks polkit for the
+  password, so the app never runs as root.
+- The OpenVPN management port is bound to localhost and protected with a one-time password
+  generated for each session.
+- Connection passwords live in the system keyring, not in files.
+- Updates are verified with minisign: the release key is built into the binary, and a build
+  without a valid signature will not install. Updating from 0.3.0 to 0.3.1 is the one honest
+  exception — the old build doesn't know the key; everything after is signed.
+- An OpenVPN config is not a sandbox: `up`, `down` and other scripts inside it run as root. Use
+  configs you trust.
+- The Flatpak build is published, but the privilege model (pkexec, keyring) is tested on native
+  packages — if you have a choice, take the .deb or .rpm.
 
 ## Getting started
 
@@ -197,8 +188,8 @@ clipboard and downloading one from a link all work too.
 ## Contributing
 
 Bug reports and pull requests are welcome — [CONTRIBUTING.md](CONTRIBUTING.md) has the build
-steps and a map of the code. A security problem goes to [SECURITY.md](SECURITY.md) instead of a
-public issue.
+steps, a map of the code and the release process. A security problem goes to
+[SECURITY.md](SECURITY.md) instead of a public issue.
 
 ## License
 
