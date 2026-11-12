@@ -8,10 +8,7 @@ use zbus::zvariant::OwnedValue;
 /// `org.freedesktop.appearance color-scheme`: 1 is dark, 2 is light, 0 is no
 /// preference.
 pub fn prefers_dark() -> bool {
-    match color_scheme() {
-        Some(2) => false,
-        _ => true,
-    }
+    !matches!(color_scheme(), Some(2))
 }
 
 fn color_scheme() -> Option<u32> {
