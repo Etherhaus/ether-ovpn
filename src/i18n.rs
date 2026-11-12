@@ -249,6 +249,10 @@ labels! {
     notify_connected => ("Connected to {}", "Подключено к {}"),
     notify_disconnected => ("Disconnected", "Отключено"),
     notify_failed => ("Connection failed: {}", "Подключение не удалось: {}"),
+    connection_lost => (
+        "Lost the connection to OpenVPN. The tunnel may still be up — stop it with sudo pkill openvpn.",
+        "Связь с OpenVPN потеряна. Туннель мог остаться поднятым — остановите его командой sudo pkill openvpn."
+    ),
     notify_tray => ("Ether keeps running in the tray.", "Ether продолжает работать в трее."),
     reconnecting_attempt => (
         "Reconnecting… (attempt {} of {})",
