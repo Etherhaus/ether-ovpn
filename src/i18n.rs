@@ -346,10 +346,18 @@ labels! {
         " Понадобится ваш пароль."
     ),
     update_prerelease_note => (" This is a pre-release.", " Это предварительная версия."),
+    update_prerelease_installed => (
+        " You're on a pre-release; the next stable release will replace it.",
+        " Вы на предварительной версии, следующая стабильная её заменит."
+    ),
     up_to_date => ("You're up to date.", "У вас последняя версия."),
     update_check_failed => (
         "Couldn't check: {}",
         "Не удалось проверить: {}"
+    ),
+    update_rate_limited => (
+        "GitHub is limiting requests right now, try again later.",
+        "GitHub временно ограничивает запросы, попробуйте позже."
     ),
     installing => ("Installing the update…", "Установка обновления…"),
     update_done => (

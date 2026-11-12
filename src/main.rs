@@ -1461,14 +1461,26 @@ fn handle_update_status(ui: &AppWindow, app: &mut App, status: updater::UpdateSt
         UpdateStatus::UpToDate => {
             ui.set_update_state(UpdateState::Idle);
             if !silent {
-                ui.set_update_note(Strings::new(app.settings.lang()).up_to_date.into());
+                let t = Strings::new(app.settings.lang());
+                // A pre-release outranks every stable release, so "up to date"
+                // is true but misleading: the next stable will replace it.
+                let note = if app.settings.channel() == updater::Channel::Stable && updater::running_prerelease() {
+                    format!("{}{}", t.up_to_date, t.update_prerelease_installed)
+                } else {
+                    t.up_to_date.to_owned()
+                };
+                ui.set_update_note(note.into());
             }
         }
-        UpdateStatus::Failed(e) => {
+        UpdateStatus::Failed(error) => {
             ui.set_update_state(UpdateState::Idle);
             if !silent {
                 let t = Strings::new(app.settings.lang());
-                ui.set_update_note(i18n::fill(t.update_check_failed, &[&e]).into());
+                let note = match error {
+                    updater::CheckError::RateLimited => t.update_rate_limited.to_owned(),
+                    updater::CheckError::Message(message) => i18n::fill(t.update_check_failed, &[&message]),
+                };
+                ui.set_update_note(note.into());
             }
         }
     }

@@ -69,7 +69,31 @@ impl Channel {
 pub enum UpdateStatus {
     UpToDate,
     Available(Release),
-    Failed(String),
+    Failed(CheckError),
+}
+
+/// Why a check failed.
+///
+/// Rate limiting is the one failure that says nothing about the app, so it gets
+/// its own wording instead of a bare HTTP code.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CheckError {
+    /// GitHub is throttling this address; the same check will work later.
+    RateLimited,
+    /// Anything else, already phrased for the user.
+    Message(String),
+}
+
+impl From<String> for CheckError {
+    fn from(message: String) -> CheckError {
+        CheckError::Message(message)
+    }
+}
+
+impl From<&str> for CheckError {
+    fn from(message: &str) -> CheckError {
+        CheckError::Message(message.to_owned())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -94,7 +118,7 @@ pub fn spawn_check(channel: Channel, done: impl FnOnce(UpdateStatus) + Send + 's
     std::thread::spawn(move || done(check(channel).unwrap_or_else(UpdateStatus::Failed)));
 }
 
-fn check(channel: Channel) -> Result<UpdateStatus, String> {
+fn check(channel: Channel) -> Result<UpdateStatus, CheckError> {
     let repo = REPOSITORY
         .trim_end_matches('/')
         .trim_end_matches(".git")
@@ -118,10 +142,12 @@ fn check(channel: Channel) -> Result<UpdateStatus, String> {
         .header("Accept", "application/vnd.github+json")
         .call()
         .map_err(|e| format!("Couldn't reach GitHub: {e}"))?;
-    match response.status().as_u16() {
+    let status = response.status().as_u16();
+    match status {
         200 => {}
-        404 => return Err("No releases have been published yet".to_owned()),
-        code => return Err(format!("GitHub answered with HTTP {code}")),
+        404 => return Err("No releases have been published yet".to_owned().into()),
+        _ if rate_limited(status, response.headers()) => return Err(CheckError::RateLimited),
+        code => return Err(format!("GitHub answered with HTTP {code}").into()),
     }
     let body = response
         .body_mut()
@@ -134,13 +160,28 @@ fn check(channel: Channel) -> Result<UpdateStatus, String> {
         .as_array()
         .ok_or("GitHub sent something other than a list of releases")?;
     if list.is_empty() {
-        return Err("No releases have been published yet".to_owned());
+        return Err("No releases have been published yet".into());
     }
 
     Ok(match newest_release(list, channel) {
         Some(release) if is_newer(&release.version, CURRENT) => UpdateStatus::Available(release),
         _ => UpdateStatus::UpToDate,
     })
+}
+
+/// Whether GitHub is throttling this address rather than refusing the request.
+///
+/// A 403 is also what a forbidden request looks like, so the quota header
+/// decides: only a spent quota means "come back later".
+fn rate_limited(status: u16, headers: &ureq::http::HeaderMap) -> bool {
+    match status {
+        429 => true,
+        403 => headers
+            .get("x-ratelimit-remaining")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.trim() == "0"),
+        _ => false,
+    }
 }
 
 /// The highest version in `releases` that `channel` accepts.
@@ -251,6 +292,19 @@ fn is_newer(candidate: &str, current: &str) -> bool {
 
 pub fn current_version() -> &'static str {
     CURRENT
+}
+
+/// Whether `version` is a pre-release rather than a finished release.
+fn is_prerelease(version: &str) -> bool {
+    Version::parse(version).is_some_and(|version| !version.pre.is_empty())
+}
+
+/// Whether the running build is a pre-release.
+///
+/// The stable channel will never offer a pre-release, so a pre-release install
+/// that is "up to date" is about to be replaced by the next stable release.
+pub fn running_prerelease() -> bool {
+    is_prerelease(CURRENT)
 }
 
 /// Opens a web page in the default browser.
@@ -600,8 +654,8 @@ fn run_installer(command: &mut Command) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Asset, Channel, PUBLIC_KEY, Version, checksum_for, is_newer, newest_release, parse_release, signature_asset,
-        verify_signature_with_key, verify_with_key,
+        Asset, Channel, PUBLIC_KEY, Version, checksum_for, is_newer, is_prerelease, newest_release, parse_release,
+        rate_limited, signature_asset, verify_signature_with_key, verify_with_key,
     };
     use std::path::Path;
 
@@ -655,6 +709,37 @@ mod tests {
         assert!(is_newer("0.4.0", "0.4.0-rc.1"));
         assert!(!is_newer("0.4.0-rc.1", "0.4.0"));
         assert_eq!(Version::parse("0.4.0"), Version::parse("v0.4.0"));
+    }
+
+    #[test]
+    fn knows_a_prerelease_from_a_finished_release() {
+        assert!(is_prerelease("0.3.2-beta.1"));
+        assert!(is_prerelease("v0.4.0-rc.1"));
+        assert!(!is_prerelease("0.3.1"));
+        assert!(!is_prerelease("v1.0.0+build.7"));
+        // A tag that isn't a version is not a pre-release either.
+        assert!(!is_prerelease("nightly"));
+    }
+
+    /// Response headers carrying GitHub's quota counter, if any.
+    fn headers(remaining: Option<&str>) -> ureq::http::HeaderMap {
+        let mut headers = ureq::http::HeaderMap::new();
+        if let Some(value) = remaining {
+            headers.insert("x-ratelimit-remaining", value.parse().expect("a header value"));
+        }
+        headers
+    }
+
+    #[test]
+    fn tells_a_spent_quota_apart_from_a_forbidden_request() {
+        // GitHub spends the unauthenticated quota per address and reports it in
+        // the header. A plain 403 is a refusal, and blaming throttling for it
+        // would send the user off to wait for nothing.
+        assert!(rate_limited(403, &headers(Some("0"))));
+        assert!(rate_limited(429, &headers(None)));
+        assert!(!rate_limited(403, &headers(Some("42"))));
+        assert!(!rate_limited(403, &headers(None)));
+        assert!(!rate_limited(500, &headers(Some("0"))));
     }
 
     /// A release as GitHub's `/releases` returns it, cut down to what we read.
