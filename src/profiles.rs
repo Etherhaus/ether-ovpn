@@ -38,6 +38,8 @@ pub enum SkipReason {
     NotProfile,
     /// Reading or copying the file failed.
     Failed(String),
+    /// The profile was added, but writing the list failed.
+    SaveFailed(String),
 }
 
 /// Why a profile couldn't be renamed.
@@ -58,6 +60,8 @@ pub struct ImportReport {
     pub skipped: Vec<(String, SkipReason)>,
     /// Directives that make OpenVPN run a program, which it does as root.
     pub scripts: Vec<String>,
+    /// Set when the profiles were imported but the list couldn't be written.
+    pub save_error: Option<String>,
 }
 
 pub struct Store {
@@ -66,7 +70,9 @@ pub struct Store {
 }
 
 impl Store {
-    pub fn load() -> Store {
+    /// Loads the list. The second value is a failed migration save, which the
+    /// caller reports: the profiles work, but the list on disk is stale.
+    pub fn load() -> (Store, Option<io::Error>) {
         let dir = dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("ether");
         let mut profiles: Vec<Profile> = fs::read_to_string(dir.join("profiles.json"))
             .ok()
@@ -86,10 +92,8 @@ impl Store {
         // Older versions left the folder and the list readable by every user.
         let _ = fs::set_permissions(&store.dir, fs::Permissions::from_mode(0o700));
         let _ = fs::set_permissions(store.dir.join("profiles.json"), fs::Permissions::from_mode(0o600));
-        if filled {
-            let _ = store.save();
-        }
-        store
+        let error = if filled { store.save().err() } else { None };
+        (store, error)
     }
 
     pub fn save(&self) -> io::Result<()> {
@@ -208,7 +212,7 @@ impl Store {
         }
 
         if !report.imported.is_empty() {
-            let _ = self.save();
+            report.save_error = self.save().err().map(|e| e.to_string());
         }
         report
     }
@@ -231,7 +235,7 @@ impl Store {
         let index = self
             .store_copy(name, bytes, None)
             .map_err(|e| SkipReason::Failed(e.to_string()))?;
-        let _ = self.save();
+        self.save().map_err(|e| SkipReason::SaveFailed(e.to_string()))?;
         Ok(index)
     }
 
@@ -259,7 +263,7 @@ impl Store {
     ///
     /// The stamp is kept strictly increasing, so two connections within the same
     /// second still order correctly.
-    pub fn touch(&mut self, index: usize) {
+    pub fn touch(&mut self, index: usize) -> io::Result<()> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -268,8 +272,9 @@ impl Store {
         let stamp = now.max(latest + 1);
         if let Some(profile) = self.profiles.get_mut(index) {
             profile.last_used = stamp;
-            let _ = self.save();
+            self.save()?;
         }
+        Ok(())
     }
 
     /// The profile connected to most recently, for the tray's "connect to last".
@@ -511,9 +516,9 @@ mod tests {
         store.import_text("b", "client\nremote b.example.com 1194\n").unwrap();
         assert_eq!(store.last_used(), None);
 
-        store.touch(1);
+        store.touch(1).unwrap();
         assert_eq!(store.last_used(), Some(1));
-        store.touch(0);
+        store.touch(0).unwrap();
         assert_eq!(store.last_used(), Some(0));
     }
 
