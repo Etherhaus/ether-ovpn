@@ -902,11 +902,17 @@ fn main() -> Result<(), slint::PlatformError> {
             let mut app = app.borrow_mut();
             app.was_connected = false;
             app.retry = None;
-            if let Some(session) = &app.session {
-                session.disconnect();
-                ui.set_conn_state(ConnState::Disconnecting);
-                let t = Strings::new(app.settings.lang());
-                ui.set_status_text(t.disconnecting.into());
+            match app.session.as_ref().map(|session| session.disconnect()) {
+                None => {}
+                Some(true) => {
+                    ui.set_conn_state(ConnState::Disconnecting);
+                    let t = Strings::new(app.settings.lang());
+                    ui.set_status_text(t.disconnecting.into());
+                }
+                Some(false) => {
+                    let t = Strings::new(app.settings.lang());
+                    toast(&ui, &mut app, t.disconnect_failed, true);
+                }
             }
         }
     });
@@ -1011,11 +1017,17 @@ fn main() -> Result<(), slint::PlatformError> {
             app.cr_challenge = None;
             app.was_connected = false;
             app.retry = None;
-            if let Some(session) = &app.session {
-                session.disconnect();
-                ui.set_conn_state(ConnState::Disconnecting);
-                let t = Strings::new(app.settings.lang());
-                ui.set_status_text(t.disconnecting.into());
+            match app.session.as_ref().map(|session| session.disconnect()) {
+                None => {}
+                Some(true) => {
+                    ui.set_conn_state(ConnState::Disconnecting);
+                    let t = Strings::new(app.settings.lang());
+                    ui.set_status_text(t.disconnecting.into());
+                }
+                Some(false) => {
+                    let t = Strings::new(app.settings.lang());
+                    toast(&ui, &mut app, t.disconnect_failed, true);
+                }
             }
         }
     });

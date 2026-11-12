@@ -72,6 +72,9 @@ struct Shared {
     mgmt: Mutex<Option<TcpStream>>,
     stop_requested: AtomicBool,
     exited: AtomicBool,
+    /// Set when the management connection is gone for good, so a stop request
+    /// has nowhere to go.
+    lost: AtomicBool,
 }
 
 pub struct Session {
@@ -140,6 +143,7 @@ impl Session {
             mgmt: Mutex::new(None),
             stop_requested: AtomicBool::new(false),
             exited: AtomicBool::new(false),
+            lost: AtomicBool::new(false),
         });
 
         // Both pipes were asked for above, so they are always there.
@@ -200,9 +204,18 @@ impl Session {
         self.send(&format!("cr-response {}", base64(code)));
     }
 
-    pub fn disconnect(&self) {
+    /// Asks openvpn to stop. Returns false when the management connection is
+    /// gone, so the caller can say so instead of pretending it worked.
+    ///
+    /// While the connection is still being set up the request is honoured as
+    /// soon as it is, so only a lost connection counts as a failure.
+    pub fn disconnect(&self) -> bool {
         self.shared.stop_requested.store(true, Ordering::SeqCst);
+        if self.shared.lost.load(Ordering::SeqCst) {
+            return false;
+        }
         self.send("signal SIGTERM");
+        true
     }
 
     fn send(&self, line: &str) {
@@ -272,6 +285,7 @@ fn run_management(port: u16, secret: &str, shared: &Shared, emit: &Emit) {
     // openvpn keeps running when its management client goes away, so the
     // tunnel may still be up while Ether can no longer control it.
     if !shared.exited.load(Ordering::SeqCst) && !shared.stop_requested.load(Ordering::SeqCst) {
+        shared.lost.store(true, Ordering::SeqCst);
         emit(Event::Lost);
     }
 }
@@ -712,6 +726,7 @@ mod tests {
             mgmt: Mutex::new(None),
             stop_requested: AtomicBool::new(false),
             exited: AtomicBool::new(false),
+            lost: AtomicBool::new(false),
         });
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
@@ -787,6 +802,7 @@ mod tests {
             mgmt: Mutex::new(None),
             stop_requested: AtomicBool::new(false),
             exited: AtomicBool::new(false),
+            lost: AtomicBool::new(false),
         });
         let (tx, rx) = std::sync::mpsc::channel();
         let emit: Emit = Arc::new(move |ev| {
@@ -809,6 +825,24 @@ mod tests {
         assert!(events.iter().any(|e| matches!(e, Event::Lost)), "expected a lost event");
     }
 
+    /// A stop request has nowhere to go once the management connection is gone,
+    /// so the caller has to hear about it instead of showing "disconnecting".
+    #[test]
+    fn disconnect_reports_a_lost_connection() {
+        let shared = Arc::new(Shared {
+            mgmt: Mutex::new(None),
+            stop_requested: AtomicBool::new(false),
+            exited: AtomicBool::new(false),
+            lost: AtomicBool::new(false),
+        });
+        let session = Session { shared: shared.clone() };
+        assert!(session.disconnect());
+        assert!(shared.stop_requested.load(Ordering::SeqCst));
+
+        shared.lost.store(true, Ordering::SeqCst);
+        assert!(!session.disconnect());
+    }
+
     #[test]
     fn talks_to_management_interface() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -817,6 +851,7 @@ mod tests {
             mgmt: Mutex::new(None),
             stop_requested: AtomicBool::new(false),
             exited: AtomicBool::new(false),
+            lost: AtomicBool::new(false),
         });
         let (tx, rx) = std::sync::mpsc::channel();
         let emit: Emit = Arc::new(move |ev| {
@@ -853,7 +888,7 @@ mod tests {
             .unwrap();
         assert!(matches!(rx.recv().unwrap(), Event::State { name, .. } if name == "CONNECTED"));
 
-        session.disconnect();
+        assert!(session.disconnect());
         assert_eq!(input.next().unwrap(), "signal SIGTERM");
         drop(out);
         drop(input);
