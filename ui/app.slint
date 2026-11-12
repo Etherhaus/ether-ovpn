@@ -1280,7 +1280,11 @@ export component AppWindow inherits Window {
 
     property <bool> has-selection: root.selected >= 0 && root.selected < root.profile-count;
     property <bool> busy: root.active >= 0;
-    property <bool> can-check: root.update-state == UpdateState.idle || root.update-state == UpdateState.failed;
+    // An offered update is not an install under way, so a fresh check may start
+    // over it: otherwise the banner would outlive a channel switch.
+    property <bool> can-check: root.update-state == UpdateState.idle
+        || root.update-state == UpdateState.failed
+        || root.update-state == UpdateState.available;
     // While a connection runs, the card always describes it, whichever row is selected.
     property <bool> shows-status: root.busy || (root.has-selection && root.selected == root.status-for);
     property <ConnState> shown-state: root.shows-status ? root.conn-state : ConnState.idle;

@@ -559,7 +559,7 @@ fn main() -> Result<(), slint::PlatformError> {
             save_settings(&ui, &mut app);
             // Switching channels should offer the other channel's release now
             // rather than at the next launch, but never over a running install.
-            if matches!(ui.get_update_state(), UpdateState::Idle | UpdateState::Failed) {
+            if may_recheck(ui.get_update_state()) {
                 ui.set_update_state(UpdateState::Checking);
                 ui.set_update_note("".into());
                 check_for_updates(tx.clone(), channel, false);
@@ -1400,6 +1400,13 @@ fn save_window_size(ui: &AppWindow, app: &mut App) {
     }
 }
 
+/// Whether a fresh check may start now. An offered update is not an install
+/// under way, so it may: leaving it out would strand the banner on the old
+/// channel's release after a channel switch.
+fn may_recheck(state: UpdateState) -> bool {
+    matches!(state, UpdateState::Idle | UpdateState::Failed | UpdateState::Available)
+}
+
 fn check_for_updates(tx: mpsc::Sender<Msg>, channel: updater::Channel, silent: bool) {
     updater::spawn_check(channel, move |status| {
         let _ = tx.send(Msg::UpdateChecked { status, silent });
@@ -2198,5 +2205,20 @@ mod tests {
         assert_eq!(format_bytes(5 * 1024 * 1024), "5.0 MB");
         assert_eq!(format_duration(Duration::from_secs(0)), "00:00:00");
         assert_eq!(format_duration(Duration::from_secs(3661)), "01:01:01");
+    }
+
+    #[test]
+    fn a_channel_switch_rechecks_over_an_offered_update() {
+        // An offered update is not an install under way: switching channels has
+        // to re-evaluate it, or the banner keeps offering the old channel's
+        // release and a stable user can install a pre-release from it.
+        assert!(may_recheck(UpdateState::Available));
+        assert!(may_recheck(UpdateState::Idle));
+        assert!(may_recheck(UpdateState::Failed));
+        // A check or an install already under way must not be clobbered.
+        assert!(!may_recheck(UpdateState::Checking));
+        assert!(!may_recheck(UpdateState::Downloading));
+        assert!(!may_recheck(UpdateState::Installing));
+        assert!(!may_recheck(UpdateState::Done));
     }
 }
