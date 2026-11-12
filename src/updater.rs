@@ -21,7 +21,7 @@ const CHECKSUMS: &str = "SHA256SUMS";
 /// only checked against SHA256SUMS, which proves nothing about who built it.
 /// Fill it in with the line after `untrusted comment:` in `~/.minisign/minisign.pub`
 /// to turn signing on; see "Signing releases" in README.md.
-const PUBLIC_KEY: &str = "";
+const PUBLIC_KEY: &str = "RWQKf1RWL1og9LBKjOF0YnSYW28sXfp4B1wCTZ76/A1Z6sQCiESxB4Aw";
 const SIGNATURE_SUFFIX: &str = ".minisig";
 /// Caps on what a response may cost us, so a hostile or broken server can't
 /// exhaust memory or fill the disk.
@@ -363,13 +363,19 @@ fn checksum_for(sums: &str, name: &str) -> Option<String> {
 /// signature proves the release page is ours. With no key configured there is
 /// nothing to check against, so the step is skipped.
 fn verify_signature(assets: &[Asset], file: &Path, name: &str) -> Result<(), String> {
-    if PUBLIC_KEY.is_empty() {
+    verify_signature_with_key(PUBLIC_KEY, assets, file, name)
+}
+
+/// The same with the key passed in, so the empty-key skip can be tested
+/// without depending on what this build has configured.
+fn verify_signature_with_key(key: &str, assets: &[Asset], file: &Path, name: &str) -> Result<(), String> {
+    if key.is_empty() {
         return Ok(());
     }
     let asset = signature_asset(assets, name)?;
     let text = fetch_signature(asset)?;
     let bytes = fs::read(file).map_err(|e| format!("Can't read the download back: {e}"))?;
-    verify_with_key(PUBLIC_KEY, &bytes, &text)
+    verify_with_key(key, &bytes, &text)
 }
 
 /// Finds the `.minisig` file that belongs to `name` in the release.
@@ -473,7 +479,9 @@ fn run_installer(command: &mut Command) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Asset, PUBLIC_KEY, checksum_for, is_newer, signature_asset, verify_signature, verify_with_key};
+    use super::{
+        Asset, PUBLIC_KEY, checksum_for, is_newer, signature_asset, verify_signature_with_key, verify_with_key,
+    };
     use std::path::Path;
 
     const TEST_KEY: &str = include_str!("../tests/fixtures/minisign/test-key.pub");
@@ -575,8 +583,21 @@ mod tests {
 
     #[test]
     fn skips_the_signature_check_while_no_key_is_configured() {
-        // Releases aren't signed yet, so the step must not block an install.
-        assert!(PUBLIC_KEY.is_empty());
-        assert!(verify_signature(&[], Path::new("/nonexistent/update.tar.gz"), "update.tar.gz").is_ok());
+        // A build without a key has nothing to check against, so the step must
+        // not block an install.
+        let skipped = verify_signature_with_key("", &[], Path::new("/nonexistent/update.tar.gz"), "update.tar.gz");
+        assert!(skipped.is_ok());
+    }
+
+    #[test]
+    fn the_built_in_key_is_a_usable_key() {
+        // A fork may ship without a key; then there is nothing to check.
+        if PUBLIC_KEY.is_empty() {
+            return;
+        }
+        // The fixture is signed by another key, so the check has to fail on the
+        // mismatch, not on a key that can't be parsed.
+        let error = verify_with_key(PUBLIC_KEY, PAYLOAD, SIGNATURE).unwrap_err();
+        assert!(error.contains("isn't Ether's"), "{error}");
     }
 }
