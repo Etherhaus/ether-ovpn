@@ -1,0 +1,25 @@
+# Keeps the crate tree and the workflow actions current. Patch and minor bumps
+# are grouped, so a week's worth of them arrives as one pull request instead of
+# a dozen; a major bump still comes on its own, because those need a human.
+version: 2
+
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      cargo:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
