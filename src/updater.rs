@@ -4,6 +4,7 @@
 //! .rpm are installed through apt, dnf or zypper (asking for the admin
 //! password), and the Flatpak is reinstalled through the host's `flatpak` command.
 
+use std::cmp::Ordering;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -29,6 +30,40 @@ const MAX_JSON: u64 = 1024 * 1024;
 const MAX_SUMS: u64 = 64 * 1024;
 const MAX_SIGNATURE: u64 = 8 * 1024;
 const MAX_DOWNLOAD: u64 = 512 * 1024 * 1024;
+/// How many releases to ask GitHub for. The newest is always in the first
+/// page, and a page is enough to find the highest version either channel wants.
+const RELEASES_PER_PAGE: usize = 30;
+
+/// Which releases the user is willing to be offered.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Channel {
+    /// Only finished releases.
+    #[default]
+    Stable,
+    /// Finished releases and pre-releases.
+    Beta,
+}
+
+impl Channel {
+    pub fn from_code(code: &str) -> Channel {
+        match code {
+            "beta" => Channel::Beta,
+            _ => Channel::Stable,
+        }
+    }
+
+    pub fn code(self) -> &'static str {
+        match self {
+            Channel::Stable => "stable",
+            Channel::Beta => "beta",
+        }
+    }
+
+    /// Whether a release GitHub marks as a pre-release may be offered.
+    fn accepts(self, prerelease: bool) -> bool {
+        !prerelease || self == Channel::Beta
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum UpdateStatus {
@@ -42,6 +77,8 @@ pub struct Release {
     pub version: String,
     pub url: String,
     pub assets: Vec<Asset>,
+    /// GitHub's `prerelease` flag, so the banner can say what is being offered.
+    pub prerelease: bool,
 }
 
 /// A file attached to a GitHub release.
@@ -53,11 +90,11 @@ pub struct Asset {
 }
 
 /// Checks in the background and hands the result to `done`.
-pub fn spawn_check(done: impl FnOnce(UpdateStatus) + Send + 'static) {
-    std::thread::spawn(move || done(check().unwrap_or_else(UpdateStatus::Failed)));
+pub fn spawn_check(channel: Channel, done: impl FnOnce(UpdateStatus) + Send + 'static) {
+    std::thread::spawn(move || done(check(channel).unwrap_or_else(UpdateStatus::Failed)));
 }
 
-fn check() -> Result<UpdateStatus, String> {
+fn check(channel: Channel) -> Result<UpdateStatus, String> {
     let repo = REPOSITORY
         .trim_end_matches('/')
         .trim_end_matches(".git")
@@ -70,8 +107,13 @@ fn check() -> Result<UpdateStatus, String> {
         .http_status_as_error(false)
         .build()
         .into();
+    // The list rather than /releases/latest: the beta channel needs the
+    // pre-releases, which /latest leaves out, and picking the highest version
+    // beats trusting whichever release was published last.
     let mut response = agent
-        .get(format!("https://api.github.com/repos/{repo}/releases/latest"))
+        .get(format!(
+            "https://api.github.com/repos/{repo}/releases?per_page={RELEASES_PER_PAGE}"
+        ))
         .header("User-Agent", format!("ether-ovpn/{CURRENT}"))
         .header("Accept", "application/vnd.github+json")
         .call()
@@ -87,10 +129,37 @@ fn check() -> Result<UpdateStatus, String> {
         .limit(MAX_JSON)
         .read_to_string()
         .map_err(|e| e.to_string())?;
-    let release: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
-    let tag = release["tag_name"].as_str().ok_or("The release has no version tag")?;
-    let url = release["html_url"].as_str().unwrap_or(REPOSITORY).to_owned();
-    let assets = release["assets"]
+    let releases: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    let list = releases
+        .as_array()
+        .ok_or("GitHub sent something other than a list of releases")?;
+    if list.is_empty() {
+        return Err("No releases have been published yet".to_owned());
+    }
+
+    Ok(match newest_release(list, channel) {
+        Some(release) if is_newer(&release.version, CURRENT) => UpdateStatus::Available(release),
+        _ => UpdateStatus::UpToDate,
+    })
+}
+
+/// The highest version in `releases` that `channel` accepts.
+///
+/// A release whose tag isn't a version is skipped rather than sorted to the
+/// bottom, so a stray tag can't hide a real update.
+fn newest_release(releases: &[serde_json::Value], channel: Channel) -> Option<Release> {
+    releases
+        .iter()
+        .filter_map(parse_release)
+        .filter(|release| channel.accepts(release.prerelease))
+        .filter_map(|release| Some((Version::parse(&release.version)?, release)))
+        .max_by(|(a, _), (b, _)| a.cmp(b))
+        .map(|(_, release)| release)
+}
+
+fn parse_release(value: &serde_json::Value) -> Option<Release> {
+    let tag = value["tag_name"].as_str()?;
+    let assets = value["assets"]
         .as_array()
         .into_iter()
         .flatten()
@@ -102,31 +171,82 @@ fn check() -> Result<UpdateStatus, String> {
             })
         })
         .collect();
-
-    Ok(if is_newer(tag, CURRENT) {
-        UpdateStatus::Available(Release {
-            version: tag.trim_start_matches('v').to_owned(),
-            url,
-            assets,
-        })
-    } else {
-        UpdateStatus::UpToDate
+    Some(Release {
+        version: tag.trim_start_matches('v').to_owned(),
+        url: value["html_url"].as_str().unwrap_or(REPOSITORY).to_owned(),
+        assets,
+        prerelease: value["prerelease"].as_bool().unwrap_or(false),
     })
 }
 
-/// Compares `major.minor.patch` versions, ignoring a leading `v` and any
-/// pre-release suffix.
-fn is_newer(candidate: &str, current: &str) -> bool {
-    fn parse(v: &str) -> Option<(u64, u64, u64)> {
-        let core = v.trim().trim_start_matches('v').split(['-', '+']).next()?;
+/// A version as `major.minor.patch` plus an optional pre-release suffix.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Version {
+    core: (u64, u64, u64),
+    /// Empty for a finished release, `["beta", "1"]` for `0.4.0-beta.1`.
+    pre: Vec<String>,
+}
+
+impl Version {
+    fn parse(text: &str) -> Option<Version> {
+        // Build metadata is ignored, as semver says.
+        let text = text.trim().trim_start_matches('v').split('+').next()?;
+        let (core, pre) = text.split_once('-').unwrap_or((text, ""));
         let mut parts = core.split('.').map(|p| p.parse::<u64>());
-        Some((
+        let core = (
             parts.next()?.ok()?,
             parts.next().unwrap_or(Ok(0)).ok()?,
             parts.next().unwrap_or(Ok(0)).ok()?,
-        ))
+        );
+        let pre = pre.split('.').filter(|s| !s.is_empty()).map(str::to_owned).collect();
+        Some(Version { core, pre })
     }
-    matches!((parse(candidate), parse(current)), (Some(a), Some(b)) if a > b)
+}
+
+impl Ord for Version {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.core
+            .cmp(&other.core)
+            .then_with(|| match (self.pre.is_empty(), other.pre.is_empty()) {
+                // A finished release outranks any pre-release of the same version.
+                (true, true) => Ordering::Equal,
+                (true, false) => Ordering::Greater,
+                (false, true) => Ordering::Less,
+                (false, false) => compare_prerelease(&self.pre, &other.pre),
+            })
+    }
+}
+
+impl PartialOrd for Version {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Orders pre-release identifiers the way semver does: numeric ones compare as
+/// numbers and sort below alphanumeric ones, and a shorter list that is a
+/// prefix of a longer one is the older version.
+fn compare_prerelease(a: &[String], b: &[String]) -> Ordering {
+    for (left, right) in a.iter().zip(b) {
+        let order = match (left.parse::<u64>(), right.parse::<u64>()) {
+            (Ok(left), Ok(right)) => left.cmp(&right),
+            (Ok(_), Err(_)) => Ordering::Less,
+            (Err(_), Ok(_)) => Ordering::Greater,
+            (Err(_), Err(_)) => left.cmp(right),
+        };
+        if order != Ordering::Equal {
+            return order;
+        }
+    }
+    a.len().cmp(&b.len())
+}
+
+/// Whether `candidate` is a later version than `current`.
+fn is_newer(candidate: &str, current: &str) -> bool {
+    matches!(
+        (Version::parse(candidate), Version::parse(current)),
+        (Some(a), Some(b)) if a > b
+    )
 }
 
 pub fn current_version() -> &'static str {
@@ -480,7 +600,8 @@ fn run_installer(command: &mut Command) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Asset, PUBLIC_KEY, checksum_for, is_newer, signature_asset, verify_signature_with_key, verify_with_key,
+        Asset, Channel, PUBLIC_KEY, Version, checksum_for, is_newer, newest_release, parse_release, signature_asset,
+        verify_signature_with_key, verify_with_key,
     };
     use std::path::Path;
 
@@ -513,6 +634,93 @@ mod tests {
         assert!(!is_newer("v0.1.0", "0.1.0"));
         assert!(!is_newer("0.0.9", "0.1.0"));
         assert!(!is_newer("nightly", "0.1.0"));
+    }
+
+    #[test]
+    fn orders_prereleases_the_way_semver_does() {
+        // Without this a beta user never sees beta.2: both parse to 0.4.0.
+        assert!(is_newer("0.4.0-beta.2", "0.4.0-beta.1"));
+        assert!(is_newer("0.4.0-beta.10", "0.4.0-beta.9"));
+        assert!(is_newer("0.4.0-rc.1", "0.4.0-beta.9"));
+        assert!(is_newer("0.4.0-beta.1", "0.3.1"));
+        assert!(!is_newer("0.4.0-beta.1", "0.4.0-beta.2"));
+        // A shorter identifier list that is a prefix of a longer one is older.
+        assert!(is_newer("0.4.0-beta.1", "0.4.0-beta"));
+        // Build metadata doesn't change the order.
+        assert!(!is_newer("0.4.0+build.2", "0.4.0+build.1"));
+    }
+
+    #[test]
+    fn a_finished_release_outranks_its_prerelease() {
+        assert!(is_newer("0.4.0", "0.4.0-rc.1"));
+        assert!(!is_newer("0.4.0-rc.1", "0.4.0"));
+        assert_eq!(Version::parse("0.4.0"), Version::parse("v0.4.0"));
+    }
+
+    /// A release as GitHub's `/releases` returns it, cut down to what we read.
+    fn release_json(tag: &str, prerelease: bool) -> serde_json::Value {
+        serde_json::json!({
+            "tag_name": tag,
+            "html_url": format!("https://github.com/Etherhaus/ether-ovpn/releases/tag/{tag}"),
+            "prerelease": prerelease,
+            "assets": [{
+                "name": "SHA256SUMS",
+                "browser_download_url": "https://example.invalid/SHA256SUMS",
+                "size": 12,
+            }],
+        })
+    }
+
+    #[test]
+    fn offers_a_prerelease_only_on_the_beta_channel() {
+        let releases = [release_json("v0.4.0-beta.1", true), release_json("v0.3.1", false)];
+
+        let stable = newest_release(&releases, Channel::Stable).expect("a stable release");
+        assert_eq!(stable.version, "0.3.1");
+        assert!(!stable.prerelease);
+
+        let beta = newest_release(&releases, Channel::Beta).expect("a beta release");
+        assert_eq!(beta.version, "0.4.0-beta.1");
+        assert!(beta.prerelease);
+    }
+
+    #[test]
+    fn picks_the_highest_version_not_the_newest_published() {
+        // GitHub lists releases newest-first by publication date, so a patch to
+        // an old line can sit above a newer one.
+        let releases = [release_json("v0.3.2", false), release_json("v0.4.0", false)];
+        assert_eq!(newest_release(&releases, Channel::Stable).unwrap().version, "0.4.0");
+    }
+
+    #[test]
+    fn skips_a_tag_that_isnt_a_version() {
+        let releases = [release_json("nightly", false), release_json("v0.4.0", false)];
+        assert_eq!(newest_release(&releases, Channel::Stable).unwrap().version, "0.4.0");
+        // Nothing usable at all is not an update, and not a crash either.
+        assert_eq!(newest_release(&[release_json("nightly", false)], Channel::Beta), None);
+        assert_eq!(newest_release(&[], Channel::Beta), None);
+    }
+
+    #[test]
+    fn reads_a_release_out_of_the_api_response() {
+        let release = parse_release(&release_json("v0.4.0-beta.1", true)).expect("a release");
+        assert_eq!(release.version, "0.4.0-beta.1");
+        assert!(release.prerelease);
+        assert_eq!(release.assets.len(), 1);
+        assert_eq!(release.assets[0].name, "SHA256SUMS");
+        // A release without a tag can't be compared, so it is dropped.
+        assert_eq!(parse_release(&serde_json::json!({"prerelease": false})), None);
+    }
+
+    #[test]
+    fn reads_the_channel_code() {
+        assert_eq!(Channel::from_code("beta"), Channel::Beta);
+        assert_eq!(Channel::from_code("stable"), Channel::Stable);
+        // Anything unknown is the safe choice.
+        assert_eq!(Channel::from_code("nightly"), Channel::Stable);
+        assert_eq!(Channel::from_code(""), Channel::Stable);
+        assert_eq!(Channel::Beta.code(), "beta");
+        assert_eq!(Channel::Stable.code(), "stable");
     }
 
     #[test]

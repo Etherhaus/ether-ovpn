@@ -546,6 +546,27 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    ui.on_set_channel({
+        let ui_weak = ui.as_weak();
+        let app = app.clone();
+        let tx = tx.clone();
+        move |code| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let mut app = app.borrow_mut();
+            let channel = updater::Channel::from_code(&code);
+            app.settings.set_channel(channel);
+            ui.set_channel(channel.code().into());
+            save_settings(&ui, &mut app);
+            // Switching channels should offer the other channel's release now
+            // rather than at the next launch, but never over a running install.
+            if matches!(ui.get_update_state(), UpdateState::Idle | UpdateState::Failed) {
+                ui.set_update_state(UpdateState::Checking);
+                ui.set_update_note("".into());
+                check_for_updates(tx.clone(), channel, false);
+            }
+        }
+    });
+
     ui.on_search_changed({
         let ui_weak = ui.as_weak();
         let app = app.clone();
@@ -1052,12 +1073,13 @@ fn main() -> Result<(), slint::PlatformError> {
 
     ui.on_check_updates({
         let ui_weak = ui.as_weak();
+        let app = app.clone();
         let tx = tx.clone();
         move || {
             let Some(ui) = ui_weak.upgrade() else { return };
             ui.set_update_state(UpdateState::Checking);
             ui.set_update_note("".into());
-            check_for_updates(tx.clone(), false);
+            check_for_updates(tx.clone(), app.borrow().settings.channel(), false);
         }
     });
 
@@ -1295,7 +1317,7 @@ fn main() -> Result<(), slint::PlatformError> {
         ui.window()
             .set_size(slint::LogicalSize::new(width as f32, height as f32));
     }
-    check_for_updates(tx.clone(), true);
+    check_for_updates(tx.clone(), app.borrow().settings.channel(), true);
     // "Connect on launch" waits for the window, so the prompt has somewhere to appear.
     let auto_connect = app.borrow().settings.auto_connect;
     let last_used = app.borrow().store.last_used();
@@ -1339,6 +1361,7 @@ fn sync_settings(ui: &AppWindow, app: &App) {
     ui.set_auto_connect(app.settings.auto_connect);
     ui.set_notifications(app.settings.notifications);
     ui.set_frame(app.settings.frame);
+    ui.set_channel(app.settings.channel().code().into());
 }
 
 /// Hides the window, or quits when there is no tray icon to bring it back.
@@ -1377,8 +1400,8 @@ fn save_window_size(ui: &AppWindow, app: &mut App) {
     }
 }
 
-fn check_for_updates(tx: mpsc::Sender<Msg>, silent: bool) {
-    updater::spawn_check(move |status| {
+fn check_for_updates(tx: mpsc::Sender<Msg>, channel: updater::Channel, silent: bool) {
+    updater::spawn_check(channel, move |status| {
         let _ = tx.send(Msg::UpdateChecked { status, silent });
     });
 }
@@ -1419,8 +1442,13 @@ fn handle_update_status(ui: &AppWindow, app: &mut App, status: updater::UpdateSt
                 Ok(install) if install.asks_for_password() => t.update_password_note,
                 _ => "",
             };
+            let prerelease = if release.prerelease {
+                t.update_prerelease_note
+            } else {
+                ""
+            };
             let text = i18n::fill(t.update_available, &[&release.version, updater::current_version()]);
-            ui.set_update_text(format!("{text}{password}").into());
+            ui.set_update_text(format!("{text}{prerelease}{password}").into());
             app.release = Some(release);
         }
         UpdateStatus::UpToDate => {
