@@ -1,10 +1,11 @@
-# Runs on every push to main and every pull request, so a broken build, a
-# formatting slip or a new warning is caught long before a release tag.
+# Runs on every push to main or a stage branch, and on every pull request, so a
+# broken build, a formatting slip or a new warning is caught long before a
+# release tag.
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "stage-*"]
   pull_request:
 
 permissions:
