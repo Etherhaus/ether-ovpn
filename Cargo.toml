@@ -1,6 +1,6 @@
 [package]
 name = "ether-ovpn"
-version = "0.3.2-beta.1"
+version = "0.3.2-beta.2"
 edition = "2024"
 description = "A desktop client for OpenVPN profiles on Linux"
 license = "MIT"

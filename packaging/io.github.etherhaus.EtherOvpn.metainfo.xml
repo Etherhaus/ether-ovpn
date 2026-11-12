@@ -50,6 +50,12 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.3.2-beta.2" date="2026-11-13" type="development">
+      <description>
+        <p>Says what the updater means. When GitHub is limiting requests, the app says so and suggests trying again later instead of quoting an HTTP status code.</p>
+        <p>On the stable channel with a pre-release installed, the update check now adds that the next stable release will replace it, rather than only saying the version is current.</p>
+      </description>
+    </release>
     <release version="0.3.2-beta.1" date="2026-11-13" type="development">
       <description>
         <p>Adds an update channel. The stable channel offers only finished releases; the beta channel also offers pre-releases, and falls back to the latest stable while none has been published.</p>
