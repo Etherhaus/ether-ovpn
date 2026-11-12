@@ -49,7 +49,8 @@
 - System tray icon showing connection status, with one-click connect to the last profile.
   Closing the window keeps Ether running in the tray.
 - Start with the session and connect on launch, both optional
-- Checks GitHub for new releases and updates itself (tarball in place, .deb through apt, Flatpak through flatpak)
+- Checks GitHub for new releases and updates itself (tarball in place, .deb through apt, Flatpak through flatpak).
+  The stable channel offers finished releases; the beta channel in Settings also offers pre-releases.
 - Applies DNS pushed by the server when `update-systemd-resolved` or `update-resolv-conf` is installed
 - Warns when an imported profile carries `up`, `down`, `plugin` or another directive that makes
   OpenVPN run a program as root
