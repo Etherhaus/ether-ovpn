@@ -1,0 +1,23 @@
+pkgbase = ether-ovpn-bin
+	pkgdesc = Desktop client for OpenVPN profiles
+	pkgver = 0.3.1
+	pkgrel = 1
+	url = https://github.com/Etherhaus/ether-ovpn
+	arch = x86_64
+	license = MIT
+	depends = openvpn
+	depends = polkit
+	depends = glibc
+	depends = gcc-libs
+	depends = libglvnd
+	depends = fontconfig
+	depends = libxkbcommon-x11
+	depends = wayland
+	optdepends = xdg-desktop-portal: file dialogs and notifications on Wayland
+	optdepends = xdg-utils: opening links from the app
+	provides = ether-ovpn
+	conflicts = ether-ovpn
+	source = ether-ovpn-0.3.1-x86_64-linux.tar.gz::https://github.com/Etherhaus/ether-ovpn/releases/download/v0.3.1/ether-ovpn-0.3.1-x86_64-linux.tar.gz
+	sha256sums = f3edada69261c802055cae7551fa1dc0a9b132cdffe7b8c04a8aa56e64352003
+
+pkgname = ether-ovpn-bin

@@ -1,0 +1,5 @@
+# makepkg leaves these behind; the release tarball is fetched from GitHub.
+src/
+pkg/
+*.pkg.tar.zst
+*.tar.gz

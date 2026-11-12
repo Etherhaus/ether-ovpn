@@ -1,0 +1,42 @@
+# Maintainer: Dmitry Etherhaus <Lehzenblad@proton.me>
+#
+# Repackages the release tarball, so the binary is the one CI built and signed
+# on Ubuntu 24.04. On a new release, bump pkgver and take the new sha256sums
+# from the release's SHA256SUMS file.
+pkgname=ether-ovpn-bin
+_pkgname=ether-ovpn
+pkgver=0.3.1
+pkgrel=1
+pkgdesc="Desktop client for OpenVPN profiles"
+arch=('x86_64')
+url="https://github.com/Etherhaus/ether-ovpn"
+license=('MIT')
+depends=(
+  'openvpn'
+  'polkit'
+  'glibc'
+  'gcc-libs'
+  'libglvnd'
+  'fontconfig'
+  'libxkbcommon-x11'
+  'wayland'
+)
+optdepends=(
+  'xdg-desktop-portal: file dialogs and notifications on Wayland'
+  'xdg-utils: opening links from the app'
+)
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+source=("$_pkgname-$pkgver-x86_64-linux.tar.gz::$url/releases/download/v$pkgver/$_pkgname-$pkgver-x86_64-linux.tar.gz")
+sha256sums=('f3edada69261c802055cae7551fa1dc0a9b132cdffe7b8c04a8aa56e64352003')
+
+package() {
+  local src="$srcdir/$_pkgname-$pkgver-x86_64-linux"
+
+  install -Dm755 "$src/$_pkgname" "$pkgdir/usr/bin/$_pkgname"
+  install -Dm644 "$src/packaging/$_pkgname.desktop" "$pkgdir/usr/share/applications/$_pkgname.desktop"
+  install -Dm644 "$src/assets/ether.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/$_pkgname.svg"
+  install -Dm644 "$src/assets/ether-256.png" "$pkgdir/usr/share/icons/hicolor/256x256/apps/$_pkgname.png"
+  install -Dm644 "$src/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$src/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
+}
