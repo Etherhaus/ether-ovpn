@@ -2,7 +2,7 @@
   <img src="assets/ether.svg" alt="Иконка Ether" width="112">
 </p>
 
-<h1 align="center">Ether</h1>
+<h1 align="center">Ether (ether-ovpn)</h1>
 
 <p align="center">
   <a href="README.md">English</a> · <b>Русский</b>
@@ -15,7 +15,8 @@
 </p>
 
 <p align="center">
-  Небольшой настольный клиент OpenVPN для Linux на Rust и <a href="https://slint.dev">Slint</a>.
+  Ether (ether-ovpn) — небольшой настольный клиент OpenVPN для Linux на Rust и
+  <a href="https://slint.dev">Slint</a>.
   Импортируйте <code>.ovpn</code>-профили со своего сервера OpenVPN и подключайтесь одним щелчком.
   Работает с OpenVPN 2.4 и новее, включая серверы, которые спрашивают код двухфакторной
   аутентификации.
