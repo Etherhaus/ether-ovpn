@@ -685,6 +685,24 @@ mod tests {
     }
 
     #[test]
+    fn a_stable_channel_offers_nothing_when_only_prereleases_exist() {
+        // Nothing finished has been published yet. Stable has to stay empty
+        // rather than fall back to the beta it is meant to keep away from.
+        let releases = [release_json("v0.4.0-beta.1", true), release_json("v0.4.0-beta.2", true)];
+        assert_eq!(newest_release(&releases, Channel::Stable), None);
+    }
+
+    #[test]
+    fn a_beta_channel_falls_back_to_the_latest_stable() {
+        // No pre-release is out, so beta offers exactly what stable does.
+        let releases = [release_json("v0.3.1", false), release_json("v0.3.0", false)];
+        let beta = newest_release(&releases, Channel::Beta).expect("a release");
+        assert_eq!(beta.version, "0.3.1");
+        assert!(!beta.prerelease);
+        assert_eq!(newest_release(&releases, Channel::Stable), Some(beta));
+    }
+
+    #[test]
     fn picks_the_highest_version_not_the_newest_published() {
         // GitHub lists releases newest-first by publication date, so a patch to
         // an old line can sit above a newer one.
