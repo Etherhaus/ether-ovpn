@@ -415,7 +415,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let log_window = log_window.clone();
         let profile_window = profile_window.clone();
         move |mode| {
-            let ui = ui_weak.unwrap();
+            let Some(ui) = ui_weak.upgrade() else { return };
             let mut app = app.borrow_mut();
             app.settings.set_theme(&mode);
             app.dark = app.settings.dark();
@@ -441,7 +441,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let log_window = log_window.clone();
         let profile_window = profile_window.clone();
         move |code| {
-            let ui = ui_weak.unwrap();
+            let Some(ui) = ui_weak.upgrade() else { return };
             let mut app = app.borrow_mut();
             let lang = Lang::from_code(&code);
             app.settings.set_lang(lang);
@@ -475,7 +475,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui_weak = ui.as_weak();
         let app = app.clone();
         move |on| {
-            let ui = ui_weak.unwrap();
+            let Some(ui) = ui_weak.upgrade() else { return };
             let mut app = app.borrow_mut();
             match autostart::set(on) {
                 Ok(()) => {
@@ -515,7 +515,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let log_window = log_window.clone();
         let profile_window = profile_window.clone();
         move |on| {
-            let ui = ui_weak.unwrap();
+            let Some(ui) = ui_weak.upgrade() else { return };
             let mut app = app.borrow_mut();
             app.settings.frame = on;
             ui.set_frame(on);
@@ -534,7 +534,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let app = app.clone();
         let profile_model = profile_model.clone();
         move |query| {
-            let ui = ui_weak.unwrap();
+            let Some(ui) = ui_weak.upgrade() else { return };
             let mut app = app.borrow_mut();
             app.query = query.to_string();
             sync_profiles(&ui, &app.store, &profile_model, &app.query);
@@ -545,7 +545,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui_weak = ui.as_weak();
         let app = app.clone();
         move |i| {
-            let ui = ui_weak.unwrap();
+            let Some(ui) = ui_weak.upgrade() else { return };
             ui.set_selected(i);
             update_card_name(&ui, &app.borrow());
         }
@@ -556,7 +556,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui_weak = ui.as_weak();
         let app = app.clone();
         move |delta| {
-            let ui = ui_weak.unwrap();
+            let Some(ui) = ui_weak.upgrade() else { return };
             let app = app.borrow();
             let needle = app.query.trim().to_lowercase();
             let visible: Vec<usize> = app
@@ -584,7 +584,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui_weak = ui.as_weak();
         let app = app.clone();
         move |i| {
-            let ui = ui_weak.unwrap();
+            let Some(ui) = ui_weak.upgrade() else { return };
             let app = app.borrow();
             let Some(profile) = app.store.profiles.get(i as usize) else {
                 return;
@@ -600,7 +600,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui_weak = ui.as_weak();
         let app = app.clone();
         move |i| {
-            let ui = ui_weak.unwrap();
+            let Some(ui) = ui_weak.upgrade() else { return };
             let app = app.borrow();
             let Some(profile) = app.store.profiles.get(i as usize) else {
                 return;
@@ -617,7 +617,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let app = app.clone();
         let profile_model = profile_model.clone();
         move |i, name| {
-            let ui = ui_weak.unwrap();
+            let Some(ui) = ui_weak.upgrade() else { return };
             let mut app = app.borrow_mut();
             let t = Strings::new(app.settings.lang());
             match app.store.rename(i as usize, &name) {
@@ -785,7 +785,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let app = app.clone();
         let profile_model = profile_model.clone();
         move |i| {
-            let ui = ui_weak.unwrap();
+            let Some(ui) = ui_weak.upgrade() else { return };
             let mut app = app.borrow_mut();
             let i = i as usize;
             if i >= app.store.profiles.len() || app.active == Some(i) {
@@ -820,7 +820,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let sample_model = sample_model.clone();
         let tx = tx.clone();
         move |i| {
-            let ui = ui_weak.unwrap();
+            let Some(ui) = ui_weak.upgrade() else { return };
             let mut app = app.borrow_mut();
             if app.session.is_some() {
                 return;
@@ -872,7 +872,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui_weak = ui.as_weak();
         let app = app.clone();
         move || {
-            let ui = ui_weak.unwrap();
+            let Some(ui) = ui_weak.upgrade() else { return };
             let mut app = app.borrow_mut();
             app.was_connected = false;
             app.retry = None;
@@ -889,7 +889,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui_weak = ui.as_weak();
         let app = app.clone();
         move |username, password, code| {
-            let ui = ui_weak.unwrap();
+            let Some(ui) = ui_weak.upgrade() else { return };
             let mut app = app.borrow_mut();
             ui.set_auth_visible(false);
             ui.set_auth_password("".into());
@@ -953,7 +953,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui_weak = ui.as_weak();
         let app = app.clone();
         move || {
-            let ui = ui_weak.unwrap();
+            let Some(ui) = ui_weak.upgrade() else { return };
             let mut app = app.borrow_mut();
             app.saved_password = None;
             let Some(req) = app.auth.clone() else { return };
@@ -975,7 +975,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui_weak = ui.as_weak();
         let app = app.clone();
         move || {
-            let ui = ui_weak.unwrap();
+            let Some(ui) = ui_weak.upgrade() else { return };
             let mut app = app.borrow_mut();
             ui.set_auth_visible(false);
             ui.set_auth_password("".into());
@@ -998,7 +998,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui_weak = ui.as_weak();
         let tx = tx.clone();
         move || {
-            let ui = ui_weak.unwrap();
+            let Some(ui) = ui_weak.upgrade() else { return };
             ui.set_update_state(UpdateState::Checking);
             ui.set_update_note("".into());
             check_for_updates(tx.clone(), false);
@@ -1010,7 +1010,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let app = app.clone();
         let tx = tx.clone();
         move || {
-            let ui = ui_weak.unwrap();
+            let Some(ui) = ui_weak.upgrade() else { return };
             let mut app = app.borrow_mut();
             let Some(release) = app.release.clone() else { return };
             match updater::Install::detect() {
@@ -1046,7 +1046,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui_weak = ui.as_weak();
         let app = app.clone();
         move || {
-            let ui = ui_weak.unwrap();
+            let Some(ui) = ui_weak.upgrade() else { return };
             let app = app.borrow();
             let Some(install) = &app.install else { return };
             if let Err(e) = install.relaunch() {
@@ -1060,7 +1060,11 @@ fn main() -> Result<(), slint::PlatformError> {
 
     ui.on_dismiss_update({
         let ui_weak = ui.as_weak();
-        move || ui_weak.unwrap().set_update_state(UpdateState::Idle)
+        move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_update_state(UpdateState::Idle);
+            }
+        }
     });
 
     // With a tray icon, closing the window keeps Ether (and the tunnel) running.
@@ -1068,7 +1072,9 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui_weak = ui.as_weak();
         let app = app.clone();
         move || {
-            let ui = ui_weak.unwrap();
+            let Some(ui) = ui_weak.upgrade() else {
+                return CloseRequestResponse::HideWindow;
+            };
             hide_to_tray(&ui, &mut app.borrow_mut());
             CloseRequestResponse::HideWindow
         }
@@ -1079,7 +1085,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui_weak = ui.as_weak();
         let app = app.clone();
         move || {
-            let ui = ui_weak.unwrap();
+            let Some(ui) = ui_weak.upgrade() else { return };
             hide_to_tray(&ui, &mut app.borrow_mut());
         }
     });
@@ -1093,7 +1099,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let sample_model = sample_model.clone();
         let profile_model = profile_model.clone();
         move || {
-            let ui = ui_weak.unwrap();
+            let Some(ui) = ui_weak.upgrade() else { return };
             // Only an already opened log window is updated: building it here
             // would bring back the empty window this change removes.
             let log = log_window.opened();
@@ -1538,6 +1544,18 @@ fn handle_event(
         Event::AuthFailed => {
             app.auth_failed = true;
             app.pending_save.clear();
+        }
+        Event::Lost => {
+            // The process may have died at the same moment, and Exited then owns
+            // the state; without a session there is nothing left to report.
+            if app.session.is_none() {
+                return;
+            }
+            ui.set_conn_state(ConnState::Error);
+            ui.set_status_text(t.connection_lost.into());
+            if app.settings.notifications {
+                notify::send(t.connection_lost, "");
+            }
         }
         Event::Exited(error) => {
             let was_active = app.active;

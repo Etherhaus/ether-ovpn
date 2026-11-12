@@ -11,7 +11,7 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::Duration;
 
@@ -36,6 +36,9 @@ pub enum Event {
     AuthFailed,
     /// The openvpn process is gone. Carries an error message unless it was a clean stop.
     Exited(Option<String>),
+    /// The management connection is gone while openvpn is still running, so
+    /// Ether can no longer control the tunnel.
+    Lost,
 }
 
 #[derive(Clone, Debug)]
@@ -139,6 +142,7 @@ impl Session {
             exited: AtomicBool::new(false),
         });
 
+        // Both pipes were asked for above, so they are always there.
         let readers = [
             spawn_log_reader(child.stdout.take().unwrap(), emit.clone()),
             spawn_log_reader(child.stderr.take().unwrap(), emit.clone()),
@@ -206,8 +210,14 @@ impl Session {
     }
 }
 
+/// The management stream, ignoring a poisoned lock: it only ever guards a
+/// socket handle, and a panic elsewhere must not take the tunnel down with it.
+fn mgmt(shared: &Shared) -> MutexGuard<'_, Option<TcpStream>> {
+    shared.mgmt.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn send(shared: &Shared, line: &str) {
-    if let Some(stream) = shared.mgmt.lock().unwrap().as_mut() {
+    if let Some(stream) = mgmt(shared).as_mut() {
         let _ = stream.write_all(format!("{line}\n").as_bytes());
     }
 }
@@ -225,7 +235,7 @@ fn run_management(port: u16, secret: &str, shared: &Shared, emit: &Emit) {
     };
     let Ok(mut writer) = stream.try_clone() else { return };
     let _ = writer.write_all(format!("{secret}\n").as_bytes());
-    *shared.mgmt.lock().unwrap() = Some(writer);
+    *mgmt(shared) = Some(writer);
 
     send(shared, "state on");
     send(shared, "bytecount 2");
@@ -258,7 +268,12 @@ fn run_management(port: u16, secret: &str, shared: &Shared, emit: &Emit) {
             }
         }
     }
-    *shared.mgmt.lock().unwrap() = None;
+    *mgmt(shared) = None;
+    // openvpn keeps running when its management client goes away, so the
+    // tunnel may still be up while Ether can no longer control it.
+    if !shared.exited.load(Ordering::SeqCst) && !shared.stop_requested.load(Ordering::SeqCst) {
+        emit(Event::Lost);
+    }
 }
 
 fn parse_message(msg: &str) -> Option<Event> {
@@ -760,6 +775,38 @@ mod tests {
         session.send_auth(&plain, "foo", "bar", "");
         assert_eq!(input.next().unwrap(), r#"username "Auth" "foo""#);
         assert_eq!(input.next().unwrap(), r#"password "Auth" "bar""#);
+    }
+
+    /// openvpn keeps running when its management client goes away, so the app
+    /// has to hear about it instead of showing a connection it can't control.
+    #[test]
+    fn reports_a_lost_management_connection() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let shared = Arc::new(Shared {
+            mgmt: Mutex::new(None),
+            stop_requested: AtomicBool::new(false),
+            exited: AtomicBool::new(false),
+        });
+        let (tx, rx) = std::sync::mpsc::channel();
+        let emit: Emit = Arc::new(move |ev| {
+            let _ = tx.send(ev);
+        });
+        let client = {
+            let shared = shared.clone();
+            thread::spawn(move || run_management(port, "s3cret", &shared, &emit))
+        };
+
+        // Play the openvpn side, then vanish without being asked to stop.
+        let (stream, _) = listener.accept().unwrap();
+        let mut input = BufReader::new(stream.try_clone().unwrap()).lines().map(Result::unwrap);
+        assert_eq!(input.next().unwrap(), "s3cret");
+        drop(input);
+        drop(stream);
+        client.join().unwrap();
+
+        let events: Vec<Event> = rx.try_iter().collect();
+        assert!(events.iter().any(|e| matches!(e, Event::Lost)), "expected a lost event");
     }
 
     #[test]
