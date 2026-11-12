@@ -28,6 +28,10 @@
 |---|---|
 | ![Ether in dark mode](docs/screenshot-dark.png) | ![Ether in light mode](docs/screenshot-light.png) |
 
+| Settings, dark | Settings, light |
+|---|---|
+| ![Ether settings in dark mode](docs/settings-dark.png) | ![Ether settings in light mode](docs/settings-light.png) |
+
 ## Features
 
 - Import one or many `.ovpn` profiles at once (stored privately under `~/.config/ether`).

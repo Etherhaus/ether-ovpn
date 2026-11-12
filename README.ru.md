@@ -29,6 +29,10 @@
 |---|---|
 | ![Ether в тёмной теме](docs/screenshot-dark.png) | ![Ether в светлой теме](docs/screenshot-light.png) |
 
+| Настройки, тёмная тема | Настройки, светлая тема |
+|---|---|
+| ![Настройки Ether в тёмной теме](docs/settings-dark.png) | ![Настройки Ether в светлой теме](docs/settings-light.png) |
+
 ## Возможности
 
 - Импорт одного или сразу нескольких `.ovpn`-профилей (хранятся приватно в `~/.config/ether`).
