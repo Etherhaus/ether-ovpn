@@ -50,16 +50,13 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
-    <release version="0.3.2-beta.2" date="2026-11-13" type="development">
+    <release version="0.3.2" date="2026-11-13">
       <description>
-        <p>Says what the updater means. When GitHub is limiting requests, the app says so and suggests trying again later instead of quoting an HTTP status code.</p>
-        <p>On the stable channel with a pre-release installed, the update check now adds that the next stable release will replace it, rather than only saying the version is current.</p>
-      </description>
-    </release>
-    <release version="0.3.2-beta.1" date="2026-11-13" type="development">
-      <description>
-        <p>Adds an update channel. The stable channel offers only finished releases; the beta channel also offers pre-releases, and falls back to the latest stable while none has been published.</p>
-        <p>The updater now picks the highest version instead of the most recently published one, so a patch to an older line can no longer hide a newer release, and it compares pre-release versions the way semver does, so a beta user is offered beta.2 after beta.1.</p>
+        <p>Adds an update channel. The stable channel offers only finished releases; the beta channel in Settings also offers pre-releases, and falls back to the latest stable while none has been published.</p>
+        <p>The updater now picks the highest version instead of the most recently published one, so a patch to an older line can no longer hide a newer release, and it compares pre-release versions the way semver does.</p>
+        <p>Says what the update check means. When GitHub is limiting requests, the app says so and suggests trying again later instead of quoting an HTTP status code, and a pre-release install on the stable channel is told that the next stable release will replace it.</p>
+        <p>Stops OpenVPN by pid from the tray when the management connection is gone, so it no longer asks you to run pkill by hand.</p>
+        <p>Audits the dependencies on every pull request and lets Dependabot keep the crates and the actions current.</p>
       </description>
     </release>
     <release version="0.3.1" date="2026-11-12">
