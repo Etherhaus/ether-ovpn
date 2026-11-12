@@ -82,6 +82,16 @@ To write the release notes yourself, create a draft release for the tag before p
 `./packaging/build-packages.sh` builds the same files into `dist/` locally (needs `dpkg-deb`,
 `rpmbuild`, `flatpak` and the `org.freedesktop.Platform//25.08` runtime).
 
+### Pre-releases
+
+Tag a pre-release `v<version>-beta.<n>` (or `-rc.<n>`) and tick "Set as a pre-release" on the
+GitHub release before publishing it. The updater reads GitHub's `prerelease` flag: the stable
+channel skips those releases, the beta channel in Settings offers them. A finished release
+always outranks its own pre-releases, so `0.4.0` replaces `0.4.0-rc.1` for everyone.
+
+Pre-releases are signed and verified exactly like finished ones — the beta channel is not a way
+around the signature check.
+
 ### Signing releases
 
 `SHA256SUMS` only proves a download matches the release page. To prove the release page is
@@ -196,6 +206,16 @@ Release соберёт тарбол, .deb, .rpm, Flatpak и `SHA256SUMS` на Ub
 
 `./packaging/build-packages.sh` собирает те же файлы в `dist/` локально (нужны `dpkg-deb`,
 `rpmbuild`, `flatpak` и рантайм `org.freedesktop.Platform//25.08`).
+
+#### Предварительные версии
+
+Пометьте тег как `v<версия>-beta.<n>` (или `-rc.<n>`) и поставьте галочку «Set as a
+pre-release» у релиза на GitHub до публикации. Обновлятор читает флаг `prerelease` из GitHub:
+стабильный канал такие релизы пропускает, бета-канал в настройках — предлагает. Готовый релиз
+всегда старше своих предварительных версий, поэтому `0.4.0` заменяет `0.4.0-rc.1` у всех.
+
+Предварительные версии подписываются и проверяются так же, как готовые: бета-канал — не способ
+обойти проверку подписи.
 
 #### Подпись релизов
 
