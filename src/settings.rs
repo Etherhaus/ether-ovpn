@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::i18n::Lang;
+use crate::updater::Channel;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Settings {
@@ -30,6 +31,9 @@ pub struct Settings {
     /// rectangle that sits flush with the desktop's own borders.
     #[serde(default = "default_frame")]
     pub frame: bool,
+    /// "stable" or "beta". Beta also offers pre-releases.
+    #[serde(default = "default_channel")]
+    pub channel: String,
     /// The window size in logical pixels, so it reopens the way it was left.
     #[serde(default)]
     pub window: Option<[u32; 2]>,
@@ -51,6 +55,10 @@ fn default_frame() -> bool {
     true
 }
 
+fn default_channel() -> String {
+    Channel::Stable.code().to_string()
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Settings {
@@ -60,6 +68,7 @@ impl Default for Settings {
             auto_connect: false,
             notifications: default_notifications(),
             frame: default_frame(),
+            channel: default_channel(),
             window: None,
         }
     }
@@ -123,6 +132,15 @@ impl Settings {
 
     pub fn set_lang(&mut self, lang: Lang) {
         self.language = lang.code().to_string();
+    }
+
+    /// Which releases the updater offers.
+    pub fn channel(&self) -> Channel {
+        Channel::from_code(&self.channel)
+    }
+
+    pub fn set_channel(&mut self, channel: Channel) {
+        self.channel = channel.code().to_string();
     }
 
     pub fn window_size(&self) -> Option<(u32, u32)> {
@@ -214,6 +232,28 @@ mod tests {
     fn an_unknown_language_falls_back_to_english() {
         let settings: Settings = serde_json::from_str(r#"{"language":"de"}"#).unwrap();
         assert_eq!(settings.lang(), Lang::En);
+    }
+
+    #[test]
+    fn reads_and_writes_the_update_channel() {
+        // A settings file written before the channel existed still loads, and
+        // lands on the safe choice.
+        let old: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.channel(), Channel::Stable);
+
+        let beta: Settings = serde_json::from_str(r#"{"channel":"beta"}"#).unwrap();
+        assert_eq!(beta.channel(), Channel::Beta);
+
+        let mut settings = Settings::default();
+        settings.set_channel(Channel::Beta);
+        assert_eq!(settings.channel, "beta");
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.channel(), Channel::Beta);
+
+        // Anything unknown falls back to stable rather than quietly offering betas.
+        let odd: Settings = serde_json::from_str(r#"{"channel":"nightly"}"#).unwrap();
+        assert_eq!(odd.channel(), Channel::Stable);
     }
 
     #[test]

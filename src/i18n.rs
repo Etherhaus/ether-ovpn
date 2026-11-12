@@ -188,6 +188,13 @@ labels! {
     notify_on, set_notify_on => ("Show connection notifications", "Показывать уведомления"),
     window, set_window => ("Window", "Окно"),
     frame, set_frame => ("Window frame", "Обрамление окна"),
+    updates, set_updates => ("Updates", "Обновления"),
+    stable, set_stable => ("Stable", "Стабильные"),
+    beta, set_beta => ("Beta", "Бета"),
+    channel_hint, set_channel_hint => (
+        "Beta also offers pre-releases.",
+        "Бета-канал предлагает и предварительные версии."
+    ),
     close, set_close => ("Close", "Закрыть"),
 
     // Remove confirmation
@@ -338,6 +345,7 @@ labels! {
         " You'll be asked for your password.",
         " Понадобится ваш пароль."
     ),
+    update_prerelease_note => (" This is a pre-release.", " Это предварительная версия."),
     up_to_date => ("You're up to date.", "У вас последняя версия."),
     update_check_failed => (
         "Couldn't check: {}",

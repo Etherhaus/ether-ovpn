@@ -117,6 +117,10 @@ export global Labels {
     in property <string> notify-on;
     in property <string> window;
     in property <string> frame;
+    in property <string> updates;
+    in property <string> stable;
+    in property <string> beta;
+    in property <string> channel-hint;
     in property <string> close;
 
     in property <string> remove-body-saved;
@@ -1153,7 +1157,11 @@ export component AppWindow inherits Window {
     preferred-width: 440px;
     preferred-height: 740px;
     min-width: 360px;
-    min-height: 560px;
+    // The settings dialog is the tallest thing the window has to hold and it
+    // sizes to its content, so the floor has to clear it: below this the Close
+    // button falls outside the window. A further settings section needs the
+    // dialog to scroll rather than another bump here.
+    min-height: 640px;
     default-font-size: 14px;
     default-font-family: Theme.font-family;
     // The 3px frame is the window background; the surface sits inside it.
@@ -1225,6 +1233,8 @@ export component AppWindow inherits Window {
     in-out property <bool> notifications: true;
     // Draw the coral frame around the window.
     in-out property <bool> frame: true;
+    // "stable" or "beta": which releases the updater offers.
+    in-out property <string> channel: "stable";
 
     in property <string> version;
     in property <UpdateState> update-state: UpdateState.idle;
@@ -1265,6 +1275,7 @@ export component AppWindow inherits Window {
     callback set-auto-connect(bool);
     callback set-notifications(bool);
     callback set-frame(bool);
+    callback set-channel(string);
     callback search-changed(string);
 
     property <bool> has-selection: root.selected >= 0 && root.selected < root.profile-count;
@@ -1951,6 +1962,34 @@ export component AppWindow inherits Window {
                         root.set-notifications(value);
                     }
                 }
+            }
+        }
+
+        VerticalLayout {
+            spacing: 6px;
+            Text {
+                text: Labels.updates;
+                font-family: Theme.mono;
+                font-size: 10px;
+                font-weight: 700;
+                letter-spacing: 1px;
+                color: Theme.dim;
+            }
+
+            Segmented {
+                first: Labels.stable;
+                second: Labels.beta;
+                current: root.channel == "beta" ? 1 : 0;
+                picked(index) => {
+                    root.set-channel(index == 0 ? "stable" : "beta");
+                }
+            }
+
+            Text {
+                text: Labels.channel-hint;
+                font-size: 11.5px;
+                color: Theme.dim;
+                wrap: word-wrap;
             }
         }
 
